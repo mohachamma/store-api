@@ -77,8 +77,16 @@ for (const [slug, art, , , , price, compare, , shoes, soldOut] of products) {
 out.push(vars.join(",\n"));
 out.push(") as v(slug, sku, size, color, stock, price, compare_at) on v.slug = p.slug;");
 out.push("");
-out.push("insert into public.brands (slug, name, sort_order) values ('store', 'Store', 0);");
-out.push("update public.products set brand_id = (select id from public.brands where slug = 'store');");
+// Fictional sample brands (no real trademarks). Logos are generated placeholders in store-web/public/placeholders/brands.
+const brands = [
+  ["atlas", "ATLAS"], ["nordik", "NORDIK"], ["maison-alba", "Maison Alba"], ["kasbah", "KASBAH"],
+  ["oasis", "OASIS"], ["tamda", "tamda"], ["riviera", "RIVIERA"], ["sahari", "SAHARI"],
+];
+out.push("insert into public.brands (slug, name, logo_path, sort_order) values");
+out.push(brands.map(([slug, name], i) => `  (${q(slug)}, ${q(name)}, ${q(`/placeholders/brands/${slug}.svg`)}, ${i})`).join(",\n") + ";");
+// Spread the sample products across the brands.
+out.push("update public.products p set brand_id = b.id from (select id, row_number() over (order by sort_order) as rn from public.brands) b,");
+out.push("  (select id, row_number() over (order by created_at, slug) as rn from public.products) q where q.id = p.id and b.rn = ((q.rn - 1) % 8) + 1;");
 out.push("");
 out.push("insert into public.collections (slug, title, subtitle, hero_path, is_published) values");
 out.push(`  ('winter', ${tr({ ar: "تشكيلة الشتاء", fr: "Collection hiver", en: "Winter Collection" })}, ${tr({ ar: "قطع دافئة بخطوط بسيطة", fr: "Des pièces chaudes aux lignes simples", en: "Warm pieces, simple lines" })}, '/placeholders/hero-1.svg', true);`);
@@ -97,7 +105,12 @@ out.push(`  ('hero', ${tr({ ar: "تشكيلة الشتاء", fr: "Collection hiv
 out.push("");
 out.push("insert into public.site_settings (key, value) values");
 out.push(`  ('announcement', ${tr({ ar: "توصيل مجاني ابتداءً من 10,000 دج · الدفع عند الاستلام في 58 ولاية", fr: "Livraison gratuite dès 10 000 DA · Paiement à la livraison dans 58 wilayas", en: "Free delivery from 10,000 DA · Cash on delivery in 58 wilayas" })}),`);
-out.push(`  ('store_info', '{"name": "Store"}'::jsonb);`);
+out.push(`  ('store_info', '{"name": "Store"}'::jsonb),`);
+out.push(`  ('brands_strip', ${q(JSON.stringify({ enabled: true, animated: true, speed: 30, pause_on_hover: true, title: { ar: "علاماتنا التجارية", fr: "Nos marques", en: "Our brands" } }))}::jsonb),`);
+out.push(`  ('sale_page', ${q(JSON.stringify({ enabled: true, title: { ar: "التخفيضات", fr: "Promotions", en: "Sale" }, subtitle: { ar: "أفضل العروض لفترة محدودة", fr: "Les meilleures offres, pour une durée limitée", en: "Our best deals, for a limited time" } }))}::jsonb);`);
+out.push("");
+out.push("insert into public.offers (label, title, subtitle, cta_label, link_url, image_path, theme, show_countdown, ends_at, sort_order) values");
+out.push(`  (${tr({ ar: "عرض محدود", fr: "Offre limitée", en: "Limited offer" })}, ${tr({ ar: "خصم 35% يوم الجمعة فقط", fr: "-35% ce vendredi seulement", en: "35% off only this Friday" })}, ${tr({ ar: "واحصل على هدية مميزة", fr: "et recevez un cadeau", en: "and get a special gift" })}, ${tr({ ar: "اغتنم العرض", fr: "J'en profite", en: "Grab it now" })}, '/sale', '/placeholders/offer-1.svg', 'dark', true, now() + interval '7 days', 0);`);
 out.push("");
 out.push("insert into public.discount_codes (code, kind, value, min_subtotal) values ('WELCOME10', 'percent', 10, 3000);");
 

@@ -161,8 +161,17 @@ select p.id, v.sku, v.size, v.color, v.stock, v.price, v.compare_at from public.
   ('slim-denim-jean', 'SLIM-DENIM-JEAN-XL', 'XL', 'light', 3, 5400, null::integer)
 ) as v(slug, sku, size, color, stock, price, compare_at) on v.slug = p.slug;
 
-insert into public.brands (slug, name, sort_order) values ('store', 'Store', 0);
-update public.products set brand_id = (select id from public.brands where slug = 'store');
+insert into public.brands (slug, name, logo_path, sort_order) values
+  ('atlas', 'ATLAS', '/placeholders/brands/atlas.svg', 0),
+  ('nordik', 'NORDIK', '/placeholders/brands/nordik.svg', 1),
+  ('maison-alba', 'Maison Alba', '/placeholders/brands/maison-alba.svg', 2),
+  ('kasbah', 'KASBAH', '/placeholders/brands/kasbah.svg', 3),
+  ('oasis', 'OASIS', '/placeholders/brands/oasis.svg', 4),
+  ('tamda', 'tamda', '/placeholders/brands/tamda.svg', 5),
+  ('riviera', 'RIVIERA', '/placeholders/brands/riviera.svg', 6),
+  ('sahari', 'SAHARI', '/placeholders/brands/sahari.svg', 7);
+update public.products p set brand_id = b.id from (select id, row_number() over (order by sort_order) as rn from public.brands) b,
+  (select id, row_number() over (order by created_at, slug) as rn from public.products) q where q.id = p.id and b.rn = ((q.rn - 1) % 8) + 1;
 
 insert into public.collections (slug, title, subtitle, hero_path, is_published) values
   ('winter', '{"ar":"تشكيلة الشتاء","fr":"Collection hiver","en":"Winter Collection"}'::jsonb, '{"ar":"قطع دافئة بخطوط بسيطة","fr":"Des pièces chaudes aux lignes simples","en":"Warm pieces, simple lines"}'::jsonb, '/placeholders/hero-1.svg', true);
@@ -191,6 +200,11 @@ insert into public.slides (kind, title, subtitle, image_path, collection_id, sor
 
 insert into public.site_settings (key, value) values
   ('announcement', '{"ar":"توصيل مجاني ابتداءً من 10,000 دج · الدفع عند الاستلام في 58 ولاية","fr":"Livraison gratuite dès 10 000 DA · Paiement à la livraison dans 58 wilayas","en":"Free delivery from 10,000 DA · Cash on delivery in 58 wilayas"}'::jsonb),
-  ('store_info', '{"name": "Store"}'::jsonb);
+  ('store_info', '{"name": "Store"}'::jsonb),
+  ('brands_strip', '{"enabled":true,"animated":true,"speed":30,"pause_on_hover":true,"title":{"ar":"علاماتنا التجارية","fr":"Nos marques","en":"Our brands"}}'::jsonb),
+  ('sale_page', '{"enabled":true,"title":{"ar":"التخفيضات","fr":"Promotions","en":"Sale"},"subtitle":{"ar":"أفضل العروض لفترة محدودة","fr":"Les meilleures offres, pour une durée limitée","en":"Our best deals, for a limited time"}}'::jsonb);
+
+insert into public.offers (label, title, subtitle, cta_label, link_url, image_path, theme, show_countdown, ends_at, sort_order) values
+  ('{"ar":"عرض محدود","fr":"Offre limitée","en":"Limited offer"}'::jsonb, '{"ar":"خصم 35% يوم الجمعة فقط","fr":"-35% ce vendredi seulement","en":"35% off only this Friday"}'::jsonb, '{"ar":"واحصل على هدية مميزة","fr":"et recevez un cadeau","en":"and get a special gift"}'::jsonb, '{"ar":"اغتنم العرض","fr":"J''en profite","en":"Grab it now"}'::jsonb, '/sale', '/placeholders/offer-1.svg', 'dark', true, now() + interval '7 days', 0);
 
 insert into public.discount_codes (code, kind, value, min_subtotal) values ('WELCOME10', 'percent', 10, 3000);

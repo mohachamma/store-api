@@ -85,10 +85,32 @@ describe("row level security", () => {
     }
   });
 
+  it("hides inactive brands and exposes the brands strip settings", async () => {
+    expect(await as("anon", {}, () => count("select count(*) n from brands"))).toBe(8);
+    await db.exec(`update brands set is_active = false where slug = 'atlas'`);
+    expect(await as("anon", {}, () => count("select count(*) n from brands"))).toBe(7);
+    expect(await as("authenticated", admin, () => count("select count(*) n from brands"))).toBe(8);
+    await db.exec(`update brands set is_active = true where slug = 'atlas'`);
+    const strip = await as("anon", {}, async () => (await db.query<{ value: Record<string, unknown> }>(`select value from site_settings where key = 'brands_strip'`)).rows[0]?.value);
+    expect(strip).toMatchObject({ enabled: true, animated: true, speed: 30, pause_on_hover: true });
+  });
+
+  it("shows offers to visitors only while active and inside their schedule", async () => {
+    expect(await as("anon", {}, () => count("select count(*) n from offers"))).toBe(1);
+    await db.exec(`update offers set ends_at = now() - interval '1 hour', show_countdown = false`);
+    expect(await as("anon", {}, () => count("select count(*) n from offers"))).toBe(0); // expired
+    expect(await as("authenticated", admin, () => count("select count(*) n from offers"))).toBe(1);
+    await db.exec(`update offers set ends_at = now() + interval '7 days', is_active = false`);
+    expect(await as("anon", {}, () => count("select count(*) n from offers"))).toBe(0); // switched off
+    await db.exec(`update offers set is_active = true, show_countdown = true`);
+    expect(await as("anon", {}, () => count("select count(*) n from offers"))).toBe(1);
+    await expect(db.exec(`update offers set ends_at = null`)).rejects.toThrow(); // countdown needs an end date
+  });
+
   it("only exposes whitelisted site settings", async () => {
     await db.exec(`insert into site_settings (key, value) values ('secret_note', '"x"')`);
     const keys = await as("anon", {}, async () => (await db.query<{ key: string }>("select key from site_settings order by key")).rows.map((r) => r.key));
-    expect(keys).toEqual(["announcement", "store_info"]);
+    expect(keys).toEqual(["announcement", "brands_strip", "sale_page", "store_info"]);
     await db.exec(`delete from site_settings where key = 'secret_note'`);
   });
 
