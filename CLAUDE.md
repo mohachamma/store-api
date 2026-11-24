@@ -67,7 +67,9 @@ The owner speaks Arabic — reply to him in Arabic. Code, comments and commit me
 
 ## Progress
 - [x] Phase 1 — setup: Hono + zod-openapi, `/health`, `/openapi.json`, env validation (`src/env.ts`), Supabase admin client (`src/lib/supabase.ts`), CORS allow-list, unified error format, Vitest tests
-- [ ] Phase 2 — database
+- [x] Phase 2 — database (no Supabase project yet — written and tested locally with PGlite): `supabase/migrations/` (core schema + RLS on every table, 58 wilayas / 1541 communes, storage bucket), `supabase/seed.sql` (16 sample products), order functions `confirm_order` / `cancel_order` / `expire_pending_orders`, admin event trigger. See `supabase/README.md`.
+- [ ] Phase 3 — public endpoints (catalog, home content, shipping fees)
 
 ## API changelog
+- (no endpoint changes in phase 2) Database schema defined in `supabase/migrations/`. **Shipping fees in the geo migration are placeholders** — the owner must set the real rates (admin dashboard, phase 4/5).
 - 0.1.0 — `GET /health`, `GET /openapi.json`. Error format: `{ error: { code, message, details? } }`. Front-ends can now run `npm run gen:api`.
