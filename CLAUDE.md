@@ -63,6 +63,9 @@ The owner speaks Arabic — reply to him in Arabic. Code, comments and commit me
 ## Everything editable (owner's rule)
 Any content shown in the storefront must be editable from the admin dashboard. For every new storefront element: (1) a field/table here with RLS, (2) a public endpoint (and `/admin/*` endpoints to change it), (3) a screen in `store-admin`. Never leave editable content hard-coded in the front-ends. Record each addition in `## API changelog` so the other two repos follow.
 
+## Owner journal (owner's rule)
+After every piece of work, update `docs/PROJECT_STATUS.md` (Arabic, for the owner): what was done in plain words, the progress tables, decisions, what the owner must do, next tasks. In the chat reply, explain to the owner in Arabic what you did. The other repos point here; if a session cannot reach this repo, it adds the entry to its own `docs/WORK_LOG.md` and tells the owner.
+
 ## Rules
 - Run `npm run build`, `npm run lint` and the tests before every push; fix all errors.
 - Small, clear commits on `main` unless the owner asks for branches.
@@ -72,9 +75,12 @@ Any content shown in the storefront must be editable from the admin dashboard. F
 - [x] Phase 1 — setup: Hono + zod-openapi, `/health`, `/openapi.json`, env validation (`src/env.ts`), Supabase admin client (`src/lib/supabase.ts`), CORS allow-list, unified error format, Vitest tests
 - [x] Phase 2 — database (no Supabase project yet — written and tested locally with PGlite): `supabase/migrations/` (core schema + RLS on every table, 58 wilayas / 1541 communes, storage bucket), `supabase/seed.sql` (16 sample products), order functions `confirm_order` / `cancel_order` / `expire_pending_orders`, admin event trigger. See `supabase/README.md`.
 - [x] Brands strip + offers/sale content in the database (`supabase/migrations/…_brands_offers.sql`): `brands.is_active/link_url`, `offers` table (label, title, subtitle, button, link, image, dark/light theme, countdown, schedule, active), settings `brands_strip` (enabled, animated, speed, pause_on_hover, title) and `sale_page` (enabled, title, subtitle)
-- [ ] Phase 3 — public endpoints (catalog, home content incl. brands/offers/sale, shipping fees) and `/admin/*` endpoints for brands, brands strip settings, offers
+- [x] Phase 3 — public endpoints (`/catalog/*`, `/shipping/*`), `POST /auth/login`, JWT admin guard, and `/admin/*` for brands, brands-strip, offers, site (announcement), sale-page, uploads. Data access = direct Postgres (`DATABASE_URL`) behind `Db` (`src/lib/db.ts`); tests run the real SQL on PGlite (`test/helpers/db.ts`); Supabase is used for Auth and Storage only.
+- [ ] Phase 4 — orders + cash on delivery, customer accounts, favorites
+- [ ] Phase 5 — remaining admin endpoints (products/variants/images, categories, collections, orders, stats, shipping fees, discount codes, slides)
 
 ## API changelog
-- (planned, phase 3) Home content gains `brands[]`, `brandsStrip{enabled,animated,speed,pause_on_hover,title}`, `offers[]`; new `GET /catalog/sale` (products with a compare-at price above the price) and `/admin/brands`, `/admin/brands-strip`, `/admin/offers` (CRUD). Storefront and dashboard already use these shapes on mock data.
+- **0.2.0 (phase 3)** New endpoints: `GET /catalog/{site,home,collections/{slug},products,products/{slug},products/{slug}/related,sale,categories,brands}`, `GET /shipping/wilayas`, `GET /shipping/wilayas/{code}/communes`, `POST /auth/login`, and `/admin/{brands,brands/{id},brands/{id}/move,brands-strip,offers,offers/{id},site,sale-page,uploads}` (Bearer token, role admin). `GET /catalog/home` returns `hero` (nullable, with `href`), `looks`, `rows`, `brands`, `brandsStrip`, `offers`, `announcement`. Env: new `SUPABASE_JWT_SECRET`, `DATABASE_URL`. Front-ends: run `npm run gen:api` and replace the temporary mock types.
+- (was planned) Home content gains `brands[]`, `brandsStrip{enabled,animated,speed,pause_on_hover,title}`, `offers[]`; new `GET /catalog/sale` (products with a compare-at price above the price) and `/admin/brands`, `/admin/brands-strip`, `/admin/offers` (CRUD). Storefront and dashboard already use these shapes on mock data.
 - (no endpoint changes in phase 2) Database schema defined in `supabase/migrations/`. **Shipping fees in the geo migration are placeholders** — the owner must set the real rates (admin dashboard, phase 4/5).
 - 0.1.0 — `GET /health`, `GET /openapi.json`. Error format: `{ error: { code, message, details? } }`. Front-ends can now run `npm run gen:api`.
