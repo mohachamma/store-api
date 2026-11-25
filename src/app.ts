@@ -2,8 +2,13 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import { getEnv } from "./env.js";
+import { lazyDb, type Db } from "./lib/db.js";
 import { errorBody, handleError } from "./lib/errors.js";
+import type { AppEnv } from "./lib/types.js";
+import { authRoutes } from "./routes/auth.js";
+import { catalogRoutes } from "./routes/catalog.js";
 import { healthRoutes } from "./routes/health.js";
+import { shippingRoutes } from "./routes/shipping.js";
 
 export const OPENAPI_INFO = {
   openapi: "3.1.0",
@@ -14,8 +19,10 @@ export const OPENAPI_INFO = {
   },
 } as const;
 
-export function createApp() {
-  const app = new OpenAPIHono({
+/** `deps.db` lets tests inject an in-process database; production connects lazily from DATABASE_URL. */
+export function createApp(deps: { db?: Db } = {}) {
+  const db = deps.db ?? lazyDb();
+  const app = new OpenAPIHono<AppEnv>({
     // Uniform validation error format for every route.
     defaultHook: (result, c) => {
       if (!result.success) {
@@ -24,6 +31,10 @@ export function createApp() {
     },
   });
 
+  app.use("*", async (c, next) => {
+    c.set("db", db);
+    await next();
+  });
   app.use("*", secureHeaders());
   app.use(
     "*",
@@ -41,6 +52,9 @@ export function createApp() {
   );
 
   app.route("/", healthRoutes);
+  app.route("/", authRoutes);
+  app.route("/", catalogRoutes);
+  app.route("/", shippingRoutes);
 
   app.doc31("/openapi.json", OPENAPI_INFO);
 

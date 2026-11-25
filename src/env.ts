@@ -18,6 +18,10 @@ const EnvSchema = z.object({
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_ANON_KEY: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  /** Supabase "JWT secret" (HS256). Without it the API verifies tokens with the project's JWKS. */
+  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
+  /** Postgres connection string (Supabase → Project Settings → Database → Connection pooling). Secret. */
+  DATABASE_URL: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
