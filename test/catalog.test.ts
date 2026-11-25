@@ -12,7 +12,7 @@ const get = async <T = any>(path: string) => {
 };
 
 beforeAll(async () => {
-  process.env.SUPABASE_URL = "https://example.supabase.co";
+  process.env.R2_PUBLIC_URL = "https://img.example.com";
   resetEnvCache();
   const t = await createTestDb();
   pg = t.pg;

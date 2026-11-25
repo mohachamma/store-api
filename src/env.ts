@@ -22,6 +22,13 @@ const EnvSchema = z.object({
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   /** Postgres connection string (Supabase → Project Settings → Database → Connection pooling). Secret. */
   DATABASE_URL: z.string().min(1).optional(),
+  /** Cloudflare R2 (images). Account id, S3-compatible API token, bucket and the public base URL of the bucket. */
+  R2_ACCOUNT_ID: z.string().min(1).optional(),
+  R2_ACCESS_KEY_ID: z.string().min(1).optional(),
+  R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  R2_BUCKET: z.string().min(1).optional(),
+  /** e.g. https://images.yourstore.dz (custom domain) or https://pub-xxxx.r2.dev — no trailing slash needed. */
+  R2_PUBLIC_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

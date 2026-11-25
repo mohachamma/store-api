@@ -11,7 +11,7 @@ Online clothing store for the Algerian market. The system is split into **three 
 The owner speaks Arabic — reply to him in Arabic. Code, comments and commit messages in English.
 
 ## How the three repos are connected (contract)
-- **This API is the only part that touches Supabase (DB + Storage with the service key), Chargily and the delivery company.** `store-web` and `store-admin` talk to the database only through this API over HTTPS.
+- **This API is the only part that touches Supabase (DB + Auth), Cloudflare R2 (images), Chargily and the delivery company.** `store-web` and `store-admin` talk to the database only through this API over HTTPS.
 - The API publishes an **OpenAPI document at `/openapi.json`**. The two front-ends generate their TypeScript types from it (`openapi-typescript`). Never hand-write API types in the front-ends, so the three parts cannot drift apart.
 - Auth: Supabase Auth issues the JWT; the API verifies it. Roles live in `app_metadata.role`: `customer` or `admin`. Everything under `/admin/*` requires `admin`.
 - CORS: allow only the origins in `WEB_ORIGIN` and `ADMIN_ORIGIN` (env). Nothing else.
@@ -19,7 +19,7 @@ The owner speaks Arabic — reply to him in Arabic. Code, comments and commit me
 
 ## Stack
 - **TypeScript (strict)**, **Hono** + **@hono/zod-openapi** (routes validated with Zod, OpenAPI generated from the same schemas), deployed on **Vercel**.
-- **Supabase**: Postgres, Auth, Storage (product images). SQL migrations in `supabase/migrations/`. **Row Level Security on every table**, even though the API uses the service key.
+- **Supabase**: Postgres and Auth. **Images: Cloudflare R2** (S3-compatible API via `aws4fetch`, public bucket/domain in `R2_PUBLIC_URL`). SQL migrations in `supabase/migrations/`. **Row Level Security on every table**, even though the API uses the service key.
 - Money: integers in DZD (no decimals). Never trust prices from the client — recompute totals on the server.
 - Secrets only in environment variables. Provide `.env.example`. Never commit keys.
 - Scheduled jobs with **Vercel Cron** (cleanup of old data).
@@ -73,14 +73,14 @@ After every piece of work, update `docs/PROJECT_STATUS.md` (Arabic, for the owne
 
 ## Progress
 - [x] Phase 1 — setup: Hono + zod-openapi, `/health`, `/openapi.json`, env validation (`src/env.ts`), Supabase admin client (`src/lib/supabase.ts`), CORS allow-list, unified error format, Vitest tests
-- [x] Phase 2 — database (no Supabase project yet — written and tested locally with PGlite): `supabase/migrations/` (core schema + RLS on every table, 58 wilayas / 1541 communes, storage bucket), `supabase/seed.sql` (16 sample products), order functions `confirm_order` / `cancel_order` / `expire_pending_orders`, admin event trigger. See `supabase/README.md`.
+- [x] Phase 2 — database (no Supabase project yet — written and tested locally with PGlite): `supabase/migrations/` (core schema + RLS on every table, 58 wilayas / 1541 communes), `supabase/seed.sql` (16 sample products), order functions `confirm_order` / `cancel_order` / `expire_pending_orders`, admin event trigger. See `supabase/README.md`.
 - [x] Brands strip + offers/sale content in the database (`supabase/migrations/…_brands_offers.sql`): `brands.is_active/link_url`, `offers` table (label, title, subtitle, button, link, image, dark/light theme, countdown, schedule, active), settings `brands_strip` (enabled, animated, speed, pause_on_hover, title) and `sale_page` (enabled, title, subtitle)
-- [x] Phase 3 — public endpoints (`/catalog/*`, `/shipping/*`), `POST /auth/login`, JWT admin guard, and `/admin/*` for brands, brands-strip, offers, site (announcement), sale-page, uploads. Data access = direct Postgres (`DATABASE_URL`) behind `Db` (`src/lib/db.ts`); tests run the real SQL on PGlite (`test/helpers/db.ts`); Supabase is used for Auth and Storage only.
+- [x] Phase 3 — public endpoints (`/catalog/*`, `/shipping/*`), `POST /auth/login`, JWT admin guard, and `/admin/*` for brands, brands-strip, offers, site (announcement), sale-page, uploads. Data access = direct Postgres (`DATABASE_URL`) behind `Db` (`src/lib/db.ts`); tests run the real SQL on PGlite (`test/helpers/db.ts`); Supabase is used for Auth only; images are stored on Cloudflare R2 (`src/lib/storage.ts`, `src/lib/media.ts`).
 - [ ] Phase 4 — orders + cash on delivery, customer accounts, favorites
 - [ ] Phase 5 — remaining admin endpoints (products/variants/images, categories, collections, orders, stats, shipping fees, discount codes, slides)
 
 ## API changelog
-- **0.2.0 (phase 3)** New endpoints: `GET /catalog/{site,home,collections/{slug},products,products/{slug},products/{slug}/related,sale,categories,brands}`, `GET /shipping/wilayas`, `GET /shipping/wilayas/{code}/communes`, `POST /auth/login`, and `/admin/{brands,brands/{id},brands/{id}/move,brands-strip,offers,offers/{id},site,sale-page,uploads}` (Bearer token, role admin). `GET /catalog/home` returns `hero` (nullable, with `href`), `looks`, `rows`, `brands`, `brandsStrip`, `offers`, `announcement`. Env: new `SUPABASE_JWT_SECRET`, `DATABASE_URL`. Front-ends: run `npm run gen:api` and replace the temporary mock types.
+- **0.2.0 (phase 3)** New endpoints: `GET /catalog/{site,home,collections/{slug},products,products/{slug},products/{slug}/related,sale,categories,brands}`, `GET /shipping/wilayas`, `GET /shipping/wilayas/{code}/communes`, `POST /auth/login`, and `/admin/{brands,brands/{id},brands/{id}/move,brands-strip,offers,offers/{id},site,sale-page,uploads}` (Bearer token, role admin). `GET /catalog/home` returns `hero` (nullable, with `href`), `looks`, `rows`, `brands`, `brandsStrip`, `offers`, `announcement`. Env: new `SUPABASE_JWT_SECRET`, `DATABASE_URL`, and the R2 image settings `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL`. `POST /admin/uploads` stores on Cloudflare R2 and returns `{ url }` (an `R2_PUBLIC_URL` link); the front-ends must allow that host in `next/image` (`remotePatterns`). Front-ends: run `npm run gen:api` and replace the temporary mock types.
 - (was planned) Home content gains `brands[]`, `brandsStrip{enabled,animated,speed,pause_on_hover,title}`, `offers[]`; new `GET /catalog/sale` (products with a compare-at price above the price) and `/admin/brands`, `/admin/brands-strip`, `/admin/offers` (CRUD). Storefront and dashboard already use these shapes on mock data.
 - (no endpoint changes in phase 2) Database schema defined in `supabase/migrations/`. **Shipping fees in the geo migration are placeholders** — the owner must set the real rates (admin dashboard, phase 4/5).
 - 0.1.0 — `GET /health`, `GET /openapi.json`. Error format: `{ error: { code, message, details? } }`. Front-ends can now run `npm run gen:api`.

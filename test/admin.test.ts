@@ -31,6 +31,7 @@ async function call(method: string, path: string, opts: { token?: string | null;
 beforeAll(async () => {
   process.env.SUPABASE_JWT_SECRET = SECRET;
   process.env.SUPABASE_URL = "https://example.supabase.co";
+  process.env.R2_PUBLIC_URL = "https://img.example.com";
   resetEnvCache();
   const t = await createTestDb();
   pg = t.pg;
@@ -163,7 +164,7 @@ describe("uploads", () => {
   it("stores a valid image and returns its public URL", async () => {
     const r = await call("POST", "/admin/uploads", { form: form(new File([new Uint8Array([1, 2, 3])], "logo.png", { type: "image/png" })) });
     expect(r.status).toBe(200);
-    expect(r.body.url).toMatch(/^https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/product-images\/uploads\/\d{4}\/\d{2}\/[0-9a-f-]+\.png$/);
+    expect(r.body.url).toMatch(/^https:\/\/img\.example\.com\/uploads\/\d{4}\/\d{2}\/[0-9a-f-]+\.png$/);
     expect(uploads.at(-1)).toMatchObject({ type: "image/png", size: 3 });
     // the dashboard sends that URL back when saving: only the path is stored
     const b = await call("POST", "/admin/brands", { json: { name: "WithLogo", logoUrl: r.body.url } });

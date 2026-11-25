@@ -21,6 +21,7 @@
     "@hono/node-server": "^2.1.11",
     "@hono/zod-openapi": "^1.6.3",
     "@supabase/supabase-js": "^2.119.2",
+    "aws4fetch": "^1.0.20",
     "hono": "^4.13.21",
     "jose": "^6.2.18",
     "postgres": "^4.1.1",

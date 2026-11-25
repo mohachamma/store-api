@@ -5,7 +5,7 @@ import { getEnv } from "./env.js";
 import { lazyDb, type Db } from "./lib/db.js";
 import { errorBody, handleError } from "./lib/errors.js";
 import { requireAdmin } from "./lib/auth.js";
-import { supabaseStorage } from "./lib/storage.js";
+import { r2Storage } from "./lib/storage.js";
 import type { AppEnv, ImageStorage } from "./lib/types.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
@@ -25,7 +25,7 @@ export const OPENAPI_INFO = {
 /** `deps.db` lets tests inject an in-process database; production connects lazily from DATABASE_URL. */
 export function createApp(deps: { db?: Db; storage?: ImageStorage } = {}) {
   const db = deps.db ?? lazyDb();
-  const storage = deps.storage ?? supabaseStorage;
+  const storage = deps.storage ?? r2Storage;
   const app = new OpenAPIHono<AppEnv>({
     // Uniform validation error format for every route.
     defaultHook: (result, c) => {

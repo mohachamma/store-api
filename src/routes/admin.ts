@@ -20,7 +20,7 @@ const Href = z
   .max(500)
   .regex(/^(\/(?!\/)[^\s]*|https:\/\/[^\s]+)$/, "Must be a path starting with / or an https URL")
   .nullable();
-/** Image: a Storage path/URL, a storefront placeholder path, or null (inline data: URLs are refused). */
+/** Image: an R2 key/URL, a storefront placeholder path, or null (inline data: URLs are refused). */
 const ImageRef = z.string().max(1000).refine((v) => !v.startsWith("data:"), "Inline images are not allowed; upload the file").nullable();
 
 const upsertSetting = (db: Db, key: string, value: unknown) =>
