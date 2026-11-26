@@ -1,7 +1,7 @@
 import type { Query } from "./db.js";
 import { ApiError } from "./errors.js";
 
-const TABLES = { categories: true, collections: true } as const;
+const TABLES = { categories: true, collections: true, slides: true } as const;
 
 /** Moves a row one step earlier (-1) or later (+1) in its `sort_order`, renumbering 1..n first. No-op at the ends. */
 export async function moveRow(q: Query, table: keyof typeof TABLES, id: string, direction: -1 | 1): Promise<void> {

@@ -9,6 +9,7 @@ import { r2Storage } from "./lib/storage.js";
 import type { AppEnv, ImageStorage } from "./lib/types.js";
 import { adminCatalogRoutes } from "./routes/admin-catalog.js";
 import { adminOrderRoutes } from "./routes/admin-orders.js";
+import { adminStoreRoutes } from "./routes/admin-store.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
@@ -20,7 +21,7 @@ export const OPENAPI_INFO = {
   openapi: "3.1.0",
   info: {
     title: "Store API",
-    version: "0.4.0",
+    version: "0.5.0",
     description: "API for the store storefront (store-web) and admin dashboard (store-admin).",
   },
 } as const;
@@ -69,6 +70,7 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage } = {}) {
   app.route("/", adminRoutes);
   app.route("/", adminOrderRoutes);
   app.route("/", adminCatalogRoutes);
+  app.route("/", adminStoreRoutes);
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", { type: "http", scheme: "bearer", bearerFormat: "JWT" });
 
   app.doc31("/openapi.json", OPENAPI_INFO);
