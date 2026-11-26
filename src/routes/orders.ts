@@ -6,7 +6,7 @@ import type { AppEnv } from "../lib/types.js";
 
 const json = <T extends z.ZodTypeAny>(schema: T, description: string) => ({ description, content: { "application/json": { schema } } });
 const body = <T extends z.ZodTypeAny>(schema: T) => ({ required: true, content: { "application/json": { schema } } });
-const errs = { 409: json(ErrorSchema, "Out of stock"), 422: json(ErrorSchema, "Invalid order"), 429: json(ErrorSchema, "Too many orders") };
+const errs = { 502: json(ErrorSchema, "Payment provider unavailable"), 409: json(ErrorSchema, "Out of stock"), 422: json(ErrorSchema, "Invalid order"), 429: json(ErrorSchema, "Too many orders") };
 
 const ItemInput = z.object({ variantId: z.string().uuid(), quantity: z.number().int().min(1).max(10) });
 const PricingInput = z.object({
@@ -36,8 +36,10 @@ const CreateOrderBody = PricingInput.extend({
     communeId: z.number().int(),
     address: z.string().trim().min(5).max(250),
   }),
-  /** Cash on delivery is the only method available for now (card payment arrives with Chargily). */
-  paymentMethod: z.literal("cod").default("cod"),
+  /** "cod" = cash on delivery; "chargily" = CIB / Edahabia card payment (only when `GET /payments/methods` says it is available). */
+  paymentMethod: z.enum(["cod", "chargily"]).default("cod"),
+  /** Language of the payment page and of the page the customer returns to. */
+  locale: LocaleQuery.default("ar"),
 }).openapi("CreateOrderBody");
 
 const OrderCreated = z
@@ -46,7 +48,9 @@ const OrderCreated = z
     /** Secret needed to open the order page (GET /orders/{orderNumber}?token=). */
     token: z.string().uuid(),
     status: z.literal("pending"),
-    paymentMethod: z.literal("cod"),
+    paymentMethod: z.enum(["cod", "chargily"]),
+    /** Card payments only: send the customer here to pay. */
+    checkoutUrl: z.string().nullable(),
     subtotal: z.number().int(),
     shippingFee: z.number().int(),
     discountTotal: z.number().int(),
@@ -101,15 +105,31 @@ orderRoutes.openapi(
     method: "post",
     path: "/orders",
     tags: ["Orders"],
-    summary: "Place a cash-on-delivery order. Prices, shipping and stock are checked and applied by the server.",
+    summary: "Place an order (cash on delivery or card). Prices, shipping and stock are checked and applied by the server.",
     request: { body: body(CreateOrderBody) },
     responses: { 200: json(OrderCreated, "Order placed"), ...errs },
   }),
   async (c) => {
     const b = c.req.valid("json");
-    const r = await createOrder(c.get("db"), { items: b.items, wilayaCode: b.wilayaCode, deliveryType: b.deliveryType, discountCode: b.discountCode, customer: b.customer, paymentMethod: b.paymentMethod });
+    const db = c.get("db");
+    const pay = c.get("payment");
+    if (b.paymentMethod === "chargily" && !pay.configured()) throw new ApiError(422, "payment_unavailable", "Card payment is not available right now");
+    const r = await createOrder(db, { items: b.items, wilayaCode: b.wilayaCode, deliveryType: b.deliveryType, discountCode: b.discountCode, customer: b.customer, paymentMethod: b.paymentMethod });
+    let checkoutUrl: string | null = null;
+    if (b.paymentMethod === "chargily") {
+      try {
+        const co = await pay.createCheckout({ orderNumber: r.orderNumber, amount: r.quote.total, token: r.token, locale: b.locale });
+        await db.query(`update public.orders set payment_ref = $2 where order_number = $1`, [r.orderNumber, co.ref]);
+        checkoutUrl = co.checkoutUrl;
+      } catch (e) {
+        // The customer cannot pay: give the stock back and cancel the order so nothing stays reserved.
+        console.error("Checkout creation failed:", (e as Error).name);
+        await db.query(`select public.cancel_order((select id from public.orders where order_number = $1))`, [r.orderNumber]);
+        throw new ApiError(502, "payment_failed", "Could not start the card payment. Please try again or choose cash on delivery.");
+      }
+    }
     return c.json(
-      { orderNumber: r.orderNumber, token: r.token, status: "pending" as const, paymentMethod: "cod" as const, subtotal: r.quote.subtotal, shippingFee: r.quote.shippingFee, discountTotal: r.quote.discountTotal, total: r.quote.total },
+      { orderNumber: r.orderNumber, token: r.token, status: "pending" as const, paymentMethod: b.paymentMethod, checkoutUrl, subtotal: r.quote.subtotal, shippingFee: r.quote.shippingFee, discountTotal: r.quote.discountTotal, total: r.quote.total },
       200,
     );
   },

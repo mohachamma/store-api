@@ -29,6 +29,17 @@ const EnvSchema = z.object({
   R2_BUCKET: z.string().min(1).optional(),
   /** e.g. https://images.yourstore.dz (custom domain) or https://pub-xxxx.r2.dev — no trailing slash needed. */
   R2_PUBLIC_URL: z.string().url().optional(),
+  /** Chargily Pay v2 secret key (test or live) and which one it is. Secret. */
+  CHARGILY_SECRET_KEY: z.string().min(1).optional(),
+  CHARGILY_MODE: z.enum(["test", "live"]).default("test"),
+  /** Public https address of this API (used for the payment webhook), no trailing slash. */
+  PUBLIC_API_URL: z.string().url().transform((v) => v.replace(/\/$/, "")).optional(),
+  /** Yalidine keys (Yalidine dashboard → Developers) and the wilaya name parcels are sent from, e.g. "Alger". Secret. */
+  YALIDINE_API_ID: z.string().min(1).optional(),
+  YALIDINE_API_TOKEN: z.string().min(1).optional(),
+  DELIVERY_FROM_WILAYA: z.string().min(1).optional(),
+  /** Vercel Cron sends this as "Authorization: Bearer <value>" to /cron/*. Secret. */
+  CRON_SECRET: z.string().min(16).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
