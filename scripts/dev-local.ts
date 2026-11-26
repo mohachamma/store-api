@@ -38,7 +38,7 @@ const users: Record<string, { id: string; password: string; role: "admin" | "cus
   "customer@store.test": { id: "00000000-0000-0000-0000-0000000000c1", password: "customer1234", role: "customer" },
 };
 
-let pgRef: { query: (sql: string, params?: unknown[]) => Promise<unknown> } | undefined;
+const pgRef: { current?: { query: (sql: string, params?: unknown[]) => Promise<unknown> } } = {};
 const images = new Map<string, { bytes: Uint8Array; type: string }>();
 
 // Fake Supabase Auth + fake image bucket
@@ -80,7 +80,7 @@ createServer((req, res) => {
       }
       const id = crypto.randomUUID();
       users[key] = { id, password: password ?? "", role: "customer", name: data?.full_name };
-      await pgRef?.query(`insert into auth.users (id) values ($1)`, [id]);
+      await pgRef.current?.query(`insert into auth.users (id) values ($1)`, [id]);
       const token = await new SignJWT({ app_metadata: { role: "customer" }, user_metadata: data ?? {}, email: key })
         .setProtectedHeader({ alg: "HS256" }).setSubject(id).setIssuedAt().setExpirationTime("8h").sign(new TextEncoder().encode(SECRET));
       res.end(JSON.stringify({ access_token: token, expires_in: 8 * 3600, user: { id, email: key } }));
@@ -120,7 +120,7 @@ const fakePay = { ...realChargily, configured: () => true, async createCheckout(
 } };
 
 const { db, pg } = await createTestDb();
-pgRef = pg;
+pgRef.current = pg;
 await pg.query(`insert into auth.users (id) values ($1)`, [users["customer@store.test"]!.id]);
 const app = createApp({ db, delivery: { manual: manualProvider, yalidine: fakeYalidine }, payment: fakePay, storage: { upload: async (key, bytes, type) => void images.set(key, { bytes, type }) } });
 

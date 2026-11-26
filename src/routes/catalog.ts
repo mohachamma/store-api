@@ -1,5 +1,5 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { getBrands, getBrandsStrip, getLooks, getOffers, getSale, getSetting, groupRows, SIZE_RANK, SUMMARY_SQL, toSummary, type SummaryRow } from "../lib/catalog.js";
+import { getBrands, getBrandsStrip, getCategoryCards, getLooks, getNewsletter, getOffers, getWhyUs, getSale, getSetting, groupRows, SIZE_RANK, SUMMARY_SQL, toSummary, type SummaryRow } from "../lib/catalog.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery, pick, pickOrNull } from "../lib/i18n.js";
 import { imageUrl } from "../lib/media.js";
@@ -83,6 +83,14 @@ const HeroSchema = z
   .object({ title: z.string(), subtitle: z.string().nullable(), image: ImageSchema, href: z.string().nullable(), collectionSlug: z.string().nullable() })
   .openapi("Hero");
 
+const WhyUsSchema = z
+  .object({ title: z.string(), items: z.array(z.object({ icon: z.string(), title: z.string(), text: z.string().nullable() })) })
+  .openapi("WhyUs");
+const CategoryCardSchema = z
+  .object({ id: z.string().uuid(), title: z.string(), subtitle: z.string().nullable(), image: ImageSchema, href: z.string().nullable() })
+  .openapi("CategoryCard");
+const NewsletterBlockSchema = z.object({ title: z.string(), subtitle: z.string().nullable(), button: z.string() }).openapi("NewsletterBlock");
+
 const HomeSchema = z
   .object({
     announcement: z.string().nullable(),
@@ -92,6 +100,11 @@ const HomeSchema = z
     brands: z.array(BrandSchema),
     brandsStrip: BrandsStripSchema,
     offers: z.array(OfferSchema),
+    /** "Why us" features; null when switched off in the dashboard. */
+    whyUs: orNull(WhyUsSchema),
+    categoryCards: z.array(CategoryCardSchema),
+    /** Newsletter sign-up block; null when switched off. */
+    newsletter: orNull(NewsletterBlockSchema),
   })
   .openapi("Home");
 
@@ -137,7 +150,7 @@ catalogRoutes.openapi(
   async (c) => {
     const { locale } = c.req.valid("query");
     const db = c.get("db");
-    const [announcement, heroRows, looks, productRows, brands, brandsStrip, offers] = await Promise.all([
+    const [announcement, heroRows, looks, productRows, brands, brandsStrip, offers, whyUs, categoryCards, newsletter] = await Promise.all([
       getSetting(db, "announcement"),
       db.query<{ title: unknown; subtitle: unknown; image_path: string; link_url: string | null; collection_slug: string | null }>(
         `select s.title, s.subtitle, s.image_path, s.link_url, c.slug as collection_slug
@@ -150,6 +163,9 @@ catalogRoutes.openapi(
       getBrands(db),
       getBrandsStrip(db, locale),
       getOffers(db, locale),
+      getWhyUs(db, locale),
+      getCategoryCards(db, locale),
+      getNewsletter(db, locale),
     ]);
     const h = heroRows[0];
     return c.json(
@@ -169,6 +185,9 @@ catalogRoutes.openapi(
         brands,
         brandsStrip,
         offers,
+        whyUs,
+        categoryCards,
+        newsletter,
       },
       200,
     );
