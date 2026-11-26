@@ -47,6 +47,21 @@ shippingRoutes.openapi(
 shippingRoutes.openapi(
   createRoute({
     method: "get",
+    path: "/shipping/rules",
+    tags: ["Shipping"],
+    summary: "Shipping rules shown at checkout (free delivery threshold)",
+    responses: { 200: json(z.object({ freeShippingOver: z.number().int().nullable() }).openapi("ShippingRules"), "OK") },
+  }),
+  async (c) => {
+    const rows = await c.get("db").query<{ value: { free_shipping_over?: number | null } }>(`select value from public.site_settings where key = 'shipping_rules'`);
+    const v = rows[0]?.value?.free_shipping_over;
+    return c.json({ freeShippingOver: typeof v === "number" && v > 0 ? v : null }, 200);
+  },
+);
+
+shippingRoutes.openapi(
+  createRoute({
+    method: "get",
     path: "/shipping/wilayas/{code}/communes",
     tags: ["Shipping"],
     summary: "Communes of a wilaya",

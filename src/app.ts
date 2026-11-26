@@ -7,17 +7,19 @@ import { errorBody, handleError } from "./lib/errors.js";
 import { requireAdmin } from "./lib/auth.js";
 import { r2Storage } from "./lib/storage.js";
 import type { AppEnv, ImageStorage } from "./lib/types.js";
+import { adminOrderRoutes } from "./routes/admin-orders.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { healthRoutes } from "./routes/health.js";
+import { orderRoutes } from "./routes/orders.js";
 import { shippingRoutes } from "./routes/shipping.js";
 
 export const OPENAPI_INFO = {
   openapi: "3.1.0",
   info: {
     title: "Store API",
-    version: "0.2.0",
+    version: "0.3.0",
     description: "API for the store storefront (store-web) and admin dashboard (store-admin).",
   },
 } as const;
@@ -60,9 +62,11 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage } = {}) {
   app.route("/", authRoutes);
   app.route("/", catalogRoutes);
   app.route("/", shippingRoutes);
+  app.route("/", orderRoutes);
   // Everything under /admin needs a valid token with role "admin".
   app.use("/admin/*", requireAdmin);
   app.route("/", adminRoutes);
+  app.route("/", adminOrderRoutes);
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", { type: "http", scheme: "bearer", bearerFormat: "JWT" });
 
   app.doc31("/openapi.json", OPENAPI_INFO);
