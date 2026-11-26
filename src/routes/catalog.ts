@@ -245,27 +245,38 @@ const ListQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+type ListFilters = Pick<z.infer<typeof ListQuery>, "q" | "category" | "size" | "color" | "minPrice" | "maxPrice">;
+
+/** WHERE clauses shared by the product list and the filter options. `skip` leaves a dimension out (so its own options stay visible). */
+function listWhere(q: ListFilters, skip: Array<keyof ListFilters> = []) {
+  const where: string[] = ["p.is_published"];
+  const params: unknown[] = [];
+  const add = (v: unknown) => (params.push(v), `$${params.length}`);
+  const use = (k: keyof ListFilters) => !skip.includes(k);
+
+  if (q.category && use("category")) where.push(`c.slug = ${add(q.category)}`);
+  if (q.q && use("q")) {
+    const like = add(`%${q.q.replace(/[\\%_]/g, "\\$&")}%`);
+    where.push(`(p.name->>'ar' ilike ${like} or p.name->>'fr' ilike ${like} or p.name->>'en' ilike ${like} or c.name->>'ar' ilike ${like} or c.name->>'fr' ilike ${like} or c.name->>'en' ilike ${like})`);
+  }
+  if (q.minPrice !== undefined && use("minPrice")) where.push(`mv.price >= ${add(q.minPrice)}`);
+  if (q.maxPrice !== undefined && use("maxPrice")) where.push(`mv.price <= ${add(q.maxPrice)}`);
+  const size = use("size") ? q.size : undefined;
+  const color = use("color") ? q.color : undefined;
+  if (size || color) {
+    const conds = ["v.product_id = p.id", "v.stock > 0"];
+    if (size) conds.push(`v.size = ${add(size)}`);
+    if (color) conds.push(`lower(v.color) = lower(${add(color)})`);
+    where.push(`exists (select 1 from public.product_variants v where ${conds.join(" and ")})`);
+  }
+  return { where: where.join(" and "), params, add };
+}
+
 catalogRoutes.openapi(
   createRoute({ method: "get", path: "/catalog/products", tags: ["Catalog"], summary: "List / search / filter products", request: { query: ListQuery }, responses: { 200: json(z.array(ProductSummarySchema), "OK") } }),
   async (c) => {
     const q = c.req.valid("query");
-    const where: string[] = ["p.is_published"];
-    const params: unknown[] = [];
-    const add = (v: unknown) => (params.push(v), `$${params.length}`);
-
-    if (q.category) where.push(`c.slug = ${add(q.category)}`);
-    if (q.q) {
-      const like = add(`%${q.q.replace(/[\\%_]/g, "\\$&")}%`);
-      where.push(`(p.name->>'ar' ilike ${like} or p.name->>'fr' ilike ${like} or p.name->>'en' ilike ${like} or c.name->>'ar' ilike ${like} or c.name->>'fr' ilike ${like} or c.name->>'en' ilike ${like})`);
-    }
-    if (q.minPrice !== undefined) where.push(`mv.price >= ${add(q.minPrice)}`);
-    if (q.maxPrice !== undefined) where.push(`mv.price <= ${add(q.maxPrice)}`);
-    if (q.size || q.color) {
-      const conds = ["v.product_id = p.id", "v.stock > 0"];
-      if (q.size) conds.push(`v.size = ${add(q.size)}`);
-      if (q.color) conds.push(`lower(v.color) = lower(${add(q.color)})`);
-      where.push(`exists (select 1 from public.product_variants v where ${conds.join(" and ")})`);
-    }
+    const { where, params, add } = listWhere(q);
     const order = {
       newest: "p.created_at desc, p.id",
       price_asc: "mv.price asc, p.id",
@@ -274,10 +285,68 @@ catalogRoutes.openapi(
     }[q.sort];
 
     const rows = await c.get("db").query<SummaryRow>(
-      `${SUMMARY_SQL} where ${where.join(" and ")} order by ${order} limit ${add(q.limit)} offset ${add(q.offset)}`,
+      `${SUMMARY_SQL} where ${where} order by ${order} limit ${add(q.limit)} offset ${add(q.offset)}`,
       params,
     );
     return c.json(rows.map((r) => toSummary(r, q.locale)), 200);
+  },
+);
+
+const FiltersSchema = z
+  .object({
+    /** Products matching ALL the filters (for "N results" and paging). */
+    total: z.number().int(),
+    /** Categories that have matching products for the search text (ignores the chosen category, so the user can switch). */
+    categories: z.array(z.object({ slug: z.string(), name: z.string(), count: z.number().int() })),
+    /** Sizes in stock for the products matching the other filters, in garment order. */
+    sizes: z.array(z.string()),
+    colors: z.array(z.string()),
+    /** Cheapest-variant price range of the products matching the other filters; null when nothing matches. */
+    priceRange: z.union([z.object({ min: z.number().int(), max: z.number().int() }), z.null()]),
+  })
+  .openapi("CatalogFilters");
+
+catalogRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/catalog/filters",
+    tags: ["Catalog"],
+    summary: "What the filter panel can offer for a search (categories, sizes, colors, price range) and how many products match",
+    request: { query: ListQuery.omit({ sort: true, limit: true, offset: true }) },
+    responses: { 200: json(FiltersSchema, "OK") },
+  }),
+  async (c) => {
+    const q = c.req.valid("query");
+    const db = c.get("db");
+    const all = listWhere(q);
+    const cat = listWhere(q, ["category", "size", "color", "minPrice", "maxPrice"]);
+    const forSizes = listWhere(q, ["size"]);
+    const forColors = listWhere(q, ["color"]);
+    const forPrice = listWhere(q, ["minPrice", "maxPrice"]);
+    const base = `from public.products p join public.categories c on c.id = p.category_id and c.is_active
+      join lateral (select v.price from public.product_variants v where v.product_id = p.id order by v.price, v.id limit 1) mv on true`;
+    const [total, categories, sizes, colors, price] = await Promise.all([
+      db.query<{ n: number }>(`select count(*)::int as n ${base} where ${all.where}`, all.params),
+      db.query<{ slug: string; name: unknown; n: number }>(`select c.slug, c.name, count(*)::int as n ${base} where ${cat.where} group by c.slug, c.name, c.sort_order order by c.sort_order, c.slug`, cat.params),
+      db.query<{ size: string }>(
+        `select size from (select distinct v.size ${base} join public.product_variants v on v.product_id = p.id and v.stock > 0 where ${forSizes.where}) s
+          order by coalesce(array_position(array['XXS','XS','S','M','L','XL','XXL','XXXL'], size), 100), size`,
+        forSizes.params,
+      ),
+      db.query<{ color: string }>(`select distinct v.color ${base} join public.product_variants v on v.product_id = p.id and v.stock > 0 where ${forColors.where} order by v.color`, forColors.params),
+      db.query<{ lo: number | null; hi: number | null }>(`select min(mv.price) as lo, max(mv.price) as hi ${base} where ${forPrice.where}`, forPrice.params),
+    ]);
+    const lo = price[0]?.lo;
+    return c.json(
+      {
+        total: Number(total[0]?.n ?? 0),
+        categories: categories.map((r) => ({ slug: r.slug, name: pick(r.name, q.locale), count: Number(r.n) })),
+        sizes: sizes.map((r) => r.size),
+        colors: colors.map((r) => r.color),
+        priceRange: lo === null || lo === undefined ? null : { min: Number(lo), max: Number(price[0]!.hi) },
+      },
+      200,
+    );
   },
 );
 
