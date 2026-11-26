@@ -67,7 +67,7 @@ const page = await shop.content();
 check("customer page now shows 'delivered' and the tracking number", /تم التسليم/.test(page) && /YAL-E2E-001/.test(page));
 await admin.goto(`${ADMIN}/`, { waitUntil: "networkidle" });
 const overview = await admin.locator("main").innerText();
-check("dashboard overview shows today's revenue and the order counts", /11\s?610|11610/.test(overview.replace(/[\s  ]/g, "")) && /1/.test(overview));
+check("dashboard overview shows today's revenue and the order counts", /11\s?610|11610/.test(overview.replace(/[\s\u202f\u00a0]/g, "")) && /1/.test(overview));
 
 // 4) Live notification: a new order arrives while the dashboard is open
 await admin.goto(`${ADMIN}/orders`, { waitUntil: "networkidle" });
