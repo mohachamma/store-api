@@ -33,11 +33,12 @@ Object.assign(process.env, {
   PUBLIC_API_URL: `http://localhost:${API_PORT}`,
 });
 
-const users: Record<string, { id: string; password: string; role: "admin" | "customer" }> = {
+const users: Record<string, { id: string; password: string; role: "admin" | "customer"; name?: string }> = {
   "admin@store.test": { id: "00000000-0000-0000-0000-0000000000a1", password: "admin1234", role: "admin" },
   "customer@store.test": { id: "00000000-0000-0000-0000-0000000000c1", password: "customer1234", role: "customer" },
 };
 
+let pgRef: { query: (sql: string, params?: unknown[]) => Promise<unknown> } | undefined;
 const images = new Map<string, { bytes: Uint8Array; type: string }>();
 
 // Fake Supabase Auth + fake image bucket
@@ -55,13 +56,34 @@ createServer((req, res) => {
         return res.end(JSON.stringify({ error: "invalid_grant", error_description: "Invalid login credentials" }));
       }
       const app_metadata = { role: u.role };
-      const token = await new SignJWT({ app_metadata, email })
+      const token = await new SignJWT({ app_metadata, email, user_metadata: u.name ? { full_name: u.name } : {} })
         .setProtectedHeader({ alg: "HS256" })
         .setSubject(u.id)
         .setIssuedAt()
         .setExpirationTime("8h")
         .sign(new TextEncoder().encode(SECRET));
       res.end(JSON.stringify({ access_token: token, expires_in: 8 * 3600, user: { id: u.id, email, app_metadata } }));
+    });
+    return;
+  }
+  // Fake sign-up: creates a customer (no email confirmation locally) and returns a session like Supabase does.
+  if (req.method === "POST" && url.pathname === "/auth/v1/signup") {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", async () => {
+      const { email, password, data } = JSON.parse(raw || "{}") as { email?: string; password?: string; data?: { full_name?: string } };
+      res.setHeader("Content-Type", "application/json");
+      const key = (email ?? "").toLowerCase();
+      if (users[key]) {
+        res.statusCode = 422;
+        return res.end(JSON.stringify({ error_code: "user_already_exists", msg: "User already registered" }));
+      }
+      const id = crypto.randomUUID();
+      users[key] = { id, password: password ?? "", role: "customer", name: data?.full_name };
+      await pgRef?.query(`insert into auth.users (id) values ($1)`, [id]);
+      const token = await new SignJWT({ app_metadata: { role: "customer" }, user_metadata: data ?? {}, email: key })
+        .setProtectedHeader({ alg: "HS256" }).setSubject(id).setIssuedAt().setExpirationTime("8h").sign(new TextEncoder().encode(SECRET));
+      res.end(JSON.stringify({ access_token: token, expires_in: 8 * 3600, user: { id, email: key } }));
     });
     return;
   }
@@ -97,7 +119,9 @@ const fakePay = { ...realChargily, configured: () => true, async createCheckout(
   return { ref: `local_${i.orderNumber}`, checkoutUrl: `http://localhost:${FAKE_PORT}/pay/local_${i.orderNumber}?return=${encodeURIComponent(back)}` };
 } };
 
-const { db } = await createTestDb();
+const { db, pg } = await createTestDb();
+pgRef = pg;
+await pg.query(`insert into auth.users (id) values ($1)`, [users["customer@store.test"]!.id]);
 const app = createApp({ db, delivery: { manual: manualProvider, yalidine: fakeYalidine }, payment: fakePay, storage: { upload: async (key, bytes, type) => void images.set(key, { bytes, type }) } });
 
 serve({ fetch: app.fetch, port: API_PORT }, () => {

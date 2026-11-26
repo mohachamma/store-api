@@ -14,7 +14,7 @@ const orNull = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, z.null()]
 const ImageSchema = z.object({ url: z.string(), alt: z.string() }).openapi("Image");
 const CategorySchema = z.object({ slug: z.string(), name: z.string() }).openapi("CategoryRef");
 
-const ProductSummarySchema = z
+export const ProductSummarySchema = z
   .object({
     id: z.string().uuid(),
     slug: z.string(),

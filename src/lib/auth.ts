@@ -1,11 +1,13 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import type { MiddlewareHandler } from "hono";
 import { getEnv } from "../env.js";
+import type { Query } from "./db.js";
 import { ApiError } from "./errors.js";
 
 export interface AdminClaims extends JWTPayload {
   app_metadata?: { role?: string };
   email?: string;
+  user_metadata?: { full_name?: string };
 }
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
@@ -38,3 +40,37 @@ export const requireAdmin: MiddlewareHandler = async (c, next) => {
   c.set("adminId", claims.sub);
   await next();
 };
+
+const bearer = (header: string | undefined) => ((header ?? "").toLowerCase().startsWith("bearer ") ? header!.slice(7).trim() : "");
+
+/** Creates the customer's profile row the first time we see them (the account itself lives in Supabase Auth). */
+export async function ensureCustomer(q: Query, claims: AdminClaims): Promise<void> {
+  const name = typeof claims.user_metadata?.full_name === "string" ? claims.user_metadata.full_name.trim().slice(0, 80) || null : null;
+  await q.query(`insert into public.customers (id, full_name) values ($1, $2) on conflict (id) do nothing`, [claims.sub, name]);
+}
+
+/** Everything under /me/* goes through this: any signed-in user (customers; admins may test their own profile too). */
+export const requireUser: MiddlewareHandler = async (c, next) => {
+  const token = bearer(c.req.header("authorization"));
+  if (!token) throw new ApiError(401, "unauthorized", "Sign in first");
+  const claims = await verifyToken(token);
+  if (!claims.sub) throw new ApiError(401, "unauthorized", "Invalid token");
+  await ensureCustomer(c.get("db"), claims);
+  c.set("userId", claims.sub);
+  c.set("userEmail", claims.email ?? "");
+  await next();
+};
+
+/** For public endpoints that behave better when the visitor is signed in (e.g. placing an order). Never fails. */
+export async function optionalUserId(header: string | undefined, q: Query): Promise<string | null> {
+  const token = bearer(header);
+  if (!token) return null;
+  try {
+    const claims = await verifyToken(token);
+    if (!claims.sub) return null;
+    await ensureCustomer(q, claims);
+    return claims.sub;
+  } catch {
+    return null;
+  }
+}

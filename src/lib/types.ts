@@ -8,4 +8,4 @@ export interface ImageStorage {
 }
 
 /** Hono context shared by all routes. */
-export type AppEnv = { Variables: { db: Db; storage: ImageStorage; delivery: Record<string, DeliveryProvider>; payment: PaymentProvider; adminId?: string } };
+export type AppEnv = { Variables: { db: Db; storage: ImageStorage; delivery: Record<string, DeliveryProvider>; payment: PaymentProvider; adminId?: string; userId?: string; userEmail?: string } };
