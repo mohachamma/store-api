@@ -61,7 +61,7 @@ const RegisterResult = z
   .object({
     /** True when the email must be confirmed (link sent by Supabase) before the first sign-in. */
     confirmationRequired: z.boolean(),
-    session: LoginResult.nullable(),
+    session: z.union([LoginResult, z.null()]),
   })
   .openapi("RegisterResult");
 
