@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import type { Db } from "../../src/lib/db.js";
+import type { Db, Query } from "../../src/lib/db.js";
 
 const root = join(import.meta.dirname, "..", "..", "supabase");
 
@@ -28,6 +28,7 @@ export async function createTestDb(opts: { seed?: boolean } = { seed: true }): P
   const files = readdirSync(join(root, "migrations")).filter((f) => f.endsWith(".sql")).sort();
   for (const f of files) await pg.exec(readFileSync(join(root, "migrations", f), "utf8"));
   if (opts.seed !== false) await pg.exec(readFileSync(join(root, "seed.sql"), "utf8"));
-  const db: Db = { query: async <T>(text: string, params: unknown[] = []) => (await pg.query<T>(text, params)).rows };
+  const q = (c: { query: PGlite["query"] }): Query => ({ query: async <T>(text: string, params: unknown[] = []) => (await c.query<T>(text, params)).rows });
+  const db: Db = { ...q(pg), tx: (fn) => pg.transaction((t) => fn(q(t as never))) };
   return { pg, db };
 }

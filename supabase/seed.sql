@@ -201,6 +201,7 @@ insert into public.slides (kind, title, subtitle, image_path, collection_id, sor
 insert into public.site_settings (key, value) values
   ('announcement', '{"ar":"توصيل مجاني ابتداءً من 10,000 دج · الدفع عند الاستلام في 58 ولاية","fr":"Livraison gratuite dès 10 000 DA · Paiement à la livraison dans 58 wilayas","en":"Free delivery from 10,000 DA · Cash on delivery in 58 wilayas"}'::jsonb),
   ('store_info', '{"name": "Store"}'::jsonb),
+  ('shipping_rules', '{"free_shipping_over": 10000}'::jsonb),
   ('brands_strip', '{"enabled":true,"animated":true,"speed":30,"pause_on_hover":true,"title":{"ar":"علاماتنا التجارية","fr":"Nos marques","en":"Our brands"}}'::jsonb),
   ('sale_page', '{"enabled":true,"title":{"ar":"التخفيضات","fr":"Promotions","en":"Sale"},"subtitle":{"ar":"أفضل العروض لفترة محدودة","fr":"Les meilleures offres, pour une durée limitée","en":"Our best deals, for a limited time"}}'::jsonb);
 

@@ -106,6 +106,7 @@ out.push("");
 out.push("insert into public.site_settings (key, value) values");
 out.push(`  ('announcement', ${tr({ ar: "توصيل مجاني ابتداءً من 10,000 دج · الدفع عند الاستلام في 58 ولاية", fr: "Livraison gratuite dès 10 000 DA · Paiement à la livraison dans 58 wilayas", en: "Free delivery from 10,000 DA · Cash on delivery in 58 wilayas" })}),`);
 out.push(`  ('store_info', '{"name": "Store"}'::jsonb),`);
+out.push(`  ('shipping_rules', '{"free_shipping_over": 10000}'::jsonb),`);
 out.push(`  ('brands_strip', ${q(JSON.stringify({ enabled: true, animated: true, speed: 30, pause_on_hover: true, title: { ar: "علاماتنا التجارية", fr: "Nos marques", en: "Our brands" } }))}::jsonb),`);
 out.push(`  ('sale_page', ${q(JSON.stringify({ enabled: true, title: { ar: "التخفيضات", fr: "Promotions", en: "Sale" }, subtitle: { ar: "أفضل العروض لفترة محدودة", fr: "Les meilleures offres, pour une durée limitée", en: "Our best deals, for a limited time" } }))}::jsonb);`);
 out.push("");
