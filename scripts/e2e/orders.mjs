@@ -15,15 +15,14 @@ const shop = await (await browser.newContext({ ...devices["iPhone 13"] })).newPa
 const admin = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
 for (const p of [shop, admin]) p.on("pageerror", (e) => console.log("PAGEERR", e.message));
 
-// 0) Warm-up: product pages built earlier may carry ids from an older API instance; the first visit refreshes them.
-for (const slug of ["hooded-deck-coat", "heavy-tee-black"]) await shop.goto(`${WEB}/ar/products/${slug}`, { waitUntil: "networkidle" });
-await new Promise((r) => setTimeout(r, 4000));
-
-// 1) Customer buys on the storefront
-await shop.goto(`${WEB}/ar/products/hooded-deck-coat`, { waitUntil: "networkidle" });
-await shop.waitForTimeout(600);
-await shop.click("button:has-text('L')");
-await shop.click("text=أضف إلى السلة");
+// 1) Customer buys on the storefront. The cart is filled from the API's current data (the storefront's page cache can lag
+//    behind a restarted test API by a couple of minutes, which would put stale variant ids in the cart).
+const coat = await (await fetch(`${API}/catalog/products/hooded-deck-coat?locale=ar`)).json();
+const coatL = coat.variants.find((v) => v.size === "L");
+await shop.goto(`${WEB}/ar`, { waitUntil: "domcontentloaded" });
+await shop.evaluate((line) => localStorage.setItem("store.cart.v1", JSON.stringify([line])), {
+  key: `${coat.id}:L`, productId: coat.id, variantId: coatL.id, slug: coat.slug, name: coat.name, image: coat.image.url, size: "L", price: coatL.price, qty: 1,
+});
 await shop.goto(`${WEB}/ar/checkout`, { waitUntil: "networkidle" });
 await shop.fill("#name", "ياسين حمدي"); await shop.fill("#phone", "+213 661 55 44 33");
 await shop.selectOption("#wilaya", "31");
