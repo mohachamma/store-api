@@ -80,7 +80,7 @@ describe("row level security", () => {
   });
 
   it("hides orders, discount codes and events from anonymous visitors", async () => {
-    for (const t of ["orders", "order_items", "discount_codes", "admin_events", "customers"]) {
+    for (const t of ["orders", "order_items", "discount_codes", "admin_events", "customers", "newsletter_subscribers"]) {
       expect(await as("anon", {}, () => count(`select count(*) n from ${t}`))).toBe(0);
     }
   });
@@ -110,7 +110,7 @@ describe("row level security", () => {
   it("only exposes whitelisted site settings", async () => {
     await db.exec(`insert into site_settings (key, value) values ('secret_note', '"x"')`);
     const keys = await as("anon", {}, async () => (await db.query<{ key: string }>("select key from site_settings order by key")).rows.map((r) => r.key));
-    expect(keys).toEqual(["announcement", "brands_strip", "sale_page", "store_info"]);
+    expect(keys).toEqual(["announcement", "brands_strip", "newsletter", "sale_page", "store_info", "why_us"]);
     await db.exec(`delete from site_settings where key = 'secret_note'`);
   });
 

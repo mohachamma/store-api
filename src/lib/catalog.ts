@@ -157,3 +157,34 @@ export function groupRows(rows: (SummaryRow & { category_sort?: number })[], loc
   }
   return [...map.values()];
 }
+
+export const WHY_ICONS = ["truck", "shield", "refresh", "headset", "card", "gift", "star", "heart"] as const;
+
+/** "Why us" block, or null when switched off / empty. */
+export async function getWhyUs(db: Db, locale: Locale) {
+  const v = (await getSetting(db, "why_us")) as { enabled?: boolean; title?: unknown; items?: { icon?: string; title?: unknown; text?: unknown }[] } | null;
+  if (!v || v.enabled === false || !v.items?.length) return null;
+  return {
+    title: pick(v.title, locale),
+    items: v.items.map((i) => ({ icon: i.icon ?? "star", title: pick(i.title, locale), text: pickOrNull(i.text, locale) })),
+  };
+}
+
+export async function getNewsletter(db: Db, locale: Locale) {
+  const v = (await getSetting(db, "newsletter")) as { enabled?: boolean; title?: unknown; subtitle?: unknown; button?: unknown } | null;
+  if (!v || v.enabled === false) return null;
+  return { title: pick(v.title, locale), subtitle: pickOrNull(v.subtitle, locale), button: pick(v.button, locale) };
+}
+
+export async function getCategoryCards(db: Db, locale: Locale) {
+  const rows = await db.query<{ id: string; title: unknown; subtitle: unknown; image_path: string; link_url: string | null }>(
+    `select id, title, subtitle, image_path, link_url from public.home_cards where is_active order by sort_order, created_at, id`,
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: pick(r.title, locale),
+    subtitle: pickOrNull(r.subtitle, locale),
+    image: { url: imageUrl(r.image_path) ?? "", alt: pick(r.title, locale) },
+    href: r.link_url,
+  }));
+}

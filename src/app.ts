@@ -13,6 +13,7 @@ import { r2Storage } from "./lib/storage.js";
 import type { AppEnv, ImageStorage } from "./lib/types.js";
 import { adminCatalogRoutes } from "./routes/admin-catalog.js";
 import { adminDeliveryRoutes } from "./routes/admin-delivery.js";
+import { adminHomeRoutes } from "./routes/admin-home.js";
 import { adminOrderRoutes } from "./routes/admin-orders.js";
 import { adminStoreRoutes } from "./routes/admin-store.js";
 import { adminRoutes } from "./routes/admin.js";
@@ -22,6 +23,7 @@ import { cronRoutes } from "./routes/cron.js";
 import { paymentRoutes } from "./routes/payments.js";
 import { healthRoutes } from "./routes/health.js";
 import { meRoutes } from "./routes/me.js";
+import { newsletterRoutes } from "./routes/newsletter.js";
 import { orderRoutes } from "./routes/orders.js";
 import { shippingRoutes } from "./routes/shipping.js";
 
@@ -29,7 +31,7 @@ export const OPENAPI_INFO = {
   openapi: "3.1.0",
   info: {
     title: "Store API",
-    version: "0.7.0",
+    version: "0.8.0",
     description: "API for the store storefront (store-web) and admin dashboard (store-admin).",
   },
 } as const;
@@ -78,6 +80,7 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Re
   app.route("/", shippingRoutes);
   app.route("/", orderRoutes);
   app.route("/", paymentRoutes);
+  app.route("/", newsletterRoutes);
   app.route("/", cronRoutes);
   // Signed-in customers only.
   app.use("/me", requireUser);
@@ -90,6 +93,7 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Re
   app.route("/", adminCatalogRoutes);
   app.route("/", adminStoreRoutes);
   app.route("/", adminDeliveryRoutes);
+  app.route("/", adminHomeRoutes);
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", { type: "http", scheme: "bearer", bearerFormat: "JWT" });
 
   app.doc31("/openapi.json", OPENAPI_INFO);
