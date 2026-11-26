@@ -1,4 +1,6 @@
 import type { Db } from "./db.js";
+import type { DeliveryProvider } from "./delivery/types.js";
+import type { PaymentProvider } from "./payments/types.js";
 
 /** Where uploaded images go (Cloudflare R2 in production, a fake in tests). */
 export interface ImageStorage {
@@ -6,4 +8,4 @@ export interface ImageStorage {
 }
 
 /** Hono context shared by all routes. */
-export type AppEnv = { Variables: { db: Db; storage: ImageStorage; adminId?: string } };
+export type AppEnv = { Variables: { db: Db; storage: ImageStorage; delivery: Record<string, DeliveryProvider>; payment: PaymentProvider; adminId?: string } };

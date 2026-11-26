@@ -2,6 +2,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery, pick, type Locale } from "../lib/i18n.js";
 import { imageUrl } from "../lib/media.js";
+import { getActiveProviderId } from "../lib/delivery/index.js";
 import { toWhatsappNumber } from "../lib/orders.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -164,17 +165,62 @@ adminOrderRoutes.openapi(
     path: "/admin/orders/{id}/confirm",
     tags: ["Admin"],
     security,
-    summary: "Confirm a pending order: stores the delivery company's tracking number and erases the customer's personal data",
-    request: { params: IdParam, query: LocaleOnly, body: body(z.object({ company: z.string().trim().min(1).max(60).default("manual"), trackingNumber: z.string().trim().min(1).max(60) })) },
-    responses: { 200: json(OrderDetail, "Confirmed"), ...errors },
+    summary: "Confirm a pending order. With a delivery company set up, the server sends the parcel to it and stores the tracking number; then the customer's personal data is erased. Without one, send the tracking number yourself.",
+    request: { params: IdParam, query: LocaleOnly, body: body(z.object({ company: z.string().trim().min(1).max(60).default("manual"), trackingNumber: z.string().trim().min(1).max(60).optional() })) },
+    responses: { 200: json(OrderDetail, "Confirmed"), 502: json(ErrorSchema, "Delivery company unavailable"), ...errors },
   }),
   async (c) => {
     const { id } = c.req.valid("param");
     const b = c.req.valid("json");
     const db = c.get("db");
     if (!(await db.query(`select 1 from public.orders where id = $1`, [id])).length) throw new ApiError(404, "not_found", "Order not found");
-    // Everything happens in the database function: tracking saved, personal data erased, atomically.
-    await db.query(`select public.confirm_order($1, $2, $3, $4)`, [id, b.company, b.trackingNumber, "created"]);
+
+    let company = b.company;
+    let tracking = b.trackingNumber;
+    let status = "created";
+    if (!tracking) {
+      const provider = c.get("delivery")[await getActiveProviderId(db)];
+      if (!provider || provider.id === "manual") throw new ApiError(422, "tracking_required", "Enter the tracking number (no delivery company is set up)");
+      if (!provider.configured()) throw new ApiError(409, "delivery_not_configured", `${provider.name} keys are not set on the server yet`);
+      const o = (await db.query<{ status: string; order_number: string; delivery_type: "home" | "desk"; total: number; payment_status: string; customer_name: string | null; customer_phone: string | null; address: string | null; wilaya_fr: string; commune_fr: string | null }>(
+        `select o.status, o.order_number, o.delivery_type, o.total, o.payment_status, o.customer_name, o.customer_phone, o.address, w.name_fr as wilaya_fr, cm.name_fr as commune_fr
+           from public.orders o join public.wilayas w on w.code = o.wilaya_code left join public.communes cm on cm.id = o.commune_id where o.id = $1`,
+        [id],
+      ))[0]!;
+      if (o.status !== "pending" || !o.customer_name) throw new ApiError(409, "conflict", "Only a pending order can be confirmed");
+      const items = await db.query<{ product_name: string; size: string; color: string; quantity: number }>(`select product_name, size, color, quantity from public.order_items where order_id = $1`, [id]);
+      let parcel;
+      try {
+        parcel = await provider.createParcel({
+          orderNumber: Number(o.order_number),
+          customerName: o.customer_name,
+          phone: o.customer_phone!,
+          address: o.address ?? "",
+          wilayaName: o.wilaya_fr,
+          communeName: o.commune_fr ?? "",
+          deliveryType: o.delivery_type,
+          amountToCollect: o.payment_status === "paid" ? 0 : Number(o.total),
+          productList: items.map((i) => `${i.product_name} (${i.size}, ${i.color}) x${i.quantity}`).join(", ").slice(0, 250),
+        });
+      } catch (e) {
+        // Log only the kind of failure, never the parcel (it holds the customer's data).
+        console.error("Delivery company call failed:", (e as Error).name, (e as Error).message);
+        throw new ApiError(502, "delivery_failed", `${provider.name} did not accept the parcel. Check the customer's address or try again.`);
+      }
+      company = provider.id;
+      tracking = parcel.trackingNumber;
+      status = parcel.status;
+      try {
+        await db.query(`select public.confirm_order($1, $2, $3, $4)`, [id, company, tracking, status]);
+      } catch (e) {
+        // The parcel exists at the company but we could not save it: cancel it so nothing is shipped twice.
+        await provider.cancelParcel(tracking).catch(() => undefined);
+        throw e;
+      }
+      return c.json(await loadDetail(c, id, c.req.valid("query").locale), 200);
+    }
+    // Manual tracking number: saved and personal data erased atomically in the database function.
+    await db.query(`select public.confirm_order($1, $2, $3, $4)`, [id, company, tracking, status]);
     return c.json(await loadDetail(c, id, c.req.valid("query").locale), 200);
   },
 );

@@ -19,6 +19,7 @@
     "dev:local": "tsx scripts/dev-local.ts"
   },
   "dependencies": {
+    "@chargily/chargily-pay": "^2.1.0",
     "@hono/node-server": "^2.1.11",
     "@hono/zod-openapi": "^1.6.3",
     "@supabase/supabase-js": "^2.119.2",

@@ -11,7 +11,10 @@
 import { createServer } from "node:http";
 import { serve } from "@hono/node-server";
 import { SignJWT } from "jose";
+import { createHmac } from "node:crypto";
 import { createApp } from "../src/app.js";
+import { manualProvider } from "../src/lib/delivery/index.js";
+import { chargily } from "../src/lib/payments/chargily.js";
 import { createTestDb } from "../test/helpers/db.js";
 
 const API_PORT = Number(process.env.PORT ?? 8787);
@@ -26,6 +29,8 @@ Object.assign(process.env, {
   SUPABASE_ANON_KEY: "local-anon-key",
   SUPABASE_JWT_SECRET: SECRET,
   R2_PUBLIC_URL: `http://localhost:${FAKE_PORT}/img`,
+  CHARGILY_SECRET_KEY: "local-dev-chargily-secret",
+  PUBLIC_API_URL: `http://localhost:${API_PORT}`,
 });
 
 const users: Record<string, { id: string; password: string; role: "admin" | "customer" }> = {
@@ -67,12 +72,33 @@ createServer((req, res) => {
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     return void res.end(Buffer.from(obj.bytes));
   }
+  // Fake Chargily checkout page: "paying" sends the same signed webhook the real service would, then returns to the shop.
+  if (req.method === "GET" && url.pathname.startsWith("/pay/")) {
+    const ref = decodeURIComponent(url.pathname.slice(5));
+    const body = JSON.stringify({ type: url.searchParams.get("fail") ? "checkout.failed" : "checkout.paid", data: { id: ref } });
+    const signature = createHmac("sha256", process.env.CHARGILY_SECRET_KEY!).update(body).digest("hex");
+    void fetch(`http://localhost:${API_PORT}/webhooks/chargily`, { method: "POST", headers: { "content-type": "application/json", signature }, body }).then(() => {
+      res.statusCode = 302;
+      res.setHeader("Location", url.searchParams.get("return") ?? "/");
+      res.end();
+    });
+    return;
+  }
   res.statusCode = 404;
   res.end();
 }).listen(FAKE_PORT);
 
+// Fake delivery company ("yalidine" in the dashboard list) so confirming an order can be tried without real keys.
+const fakeYalidine = { id: "yalidine", name: "Yalidine (local fake)", configured: () => true, async createParcel(i: { orderNumber: number }) { return { trackingNumber: `YAL-LOCAL-${i.orderNumber}`, status: "created" }; }, async getTracking() { return { status: "in_transit" }; }, async cancelParcel() {} };
+const realChargily = chargily();
+// Same signature checking as production; only the checkout page is fake.
+const fakePay = { ...realChargily, configured: () => true, async createCheckout(i: { orderNumber: number; token: string; locale: string }) {
+  const back = `${process.env.WEB_ORIGIN!.split(",")[0]}/${i.locale}/order/${i.orderNumber}?t=${i.token}`;
+  return { ref: `local_${i.orderNumber}`, checkoutUrl: `http://localhost:${FAKE_PORT}/pay/local_${i.orderNumber}?return=${encodeURIComponent(back)}` };
+} };
+
 const { db } = await createTestDb();
-const app = createApp({ db, storage: { upload: async (key, bytes, type) => void images.set(key, { bytes, type }) } });
+const app = createApp({ db, delivery: { manual: manualProvider, yalidine: fakeYalidine }, payment: fakePay, storage: { upload: async (key, bytes, type) => void images.set(key, { bytes, type }) } });
 
 serve({ fetch: app.fetch, port: API_PORT }, () => {
   console.info(`store-api (local, in-memory) on http://localhost:${API_PORT}  — fake auth/images on :${FAKE_PORT}`);
