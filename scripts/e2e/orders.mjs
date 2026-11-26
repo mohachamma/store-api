@@ -53,8 +53,14 @@ check("address and commune shown", /الصنوبر/.test(await admin.content()))
 await admin.fill("#trackingNumber", "YAL-E2E-001");
 await admin.click("main form button[type=submit]");
 await admin.waitForSelector("text=محذوفة بعد التأكيد");
-const afterConfirm = await admin.content();
-check("after confirming: tracking saved, personal data gone", /YAL-E2E-001/.test(afterConfirm) && !/ياسين حمدي|661554433|الصنوبر/.test(afterConfirm));
+// Check what the admin actually SEES (visible text; the page source still holds the data loaded before the confirmation)
+// and what the API returns for this order.
+const visible = await admin.locator("main").innerText();
+const token = (await (await fetch(`${API}/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "admin@store.test", password: "admin1234" }) })).json()).accessToken;
+const orderId = /orders\/([0-9a-f-]{36})/.exec(admin.url())[1];
+const detail = await (await fetch(`${API}/admin/orders/${orderId}`, { headers: { authorization: `Bearer ${token}` } })).json();
+check("after confirming: tracking saved, personal data gone (screen and API)",
+  /YAL-E2E-001/.test(visible) && !/ياسين حمدي|661554433|الصنوبر/.test(visible) && detail.customer === null && detail.customerName === null && detail.customerPhone === null && detail.trackingNumber === "YAL-E2E-001");
 await admin.click("button:has-text('تم الشحن')"); await admin.waitForSelector("text=تم التسليم");
 await admin.click("button:has-text('تم التسليم')"); await admin.waitForSelector("text=غير مدفوع", { state: "detached" }).catch(() => {});
 await admin.waitForTimeout(800);
@@ -65,8 +71,9 @@ await shop.goto(orderUrl, { waitUntil: "networkidle" });
 const page = await shop.content();
 check("customer page now shows 'delivered' and the tracking number", /تم التسليم/.test(page) && /YAL-E2E-001/.test(page));
 await admin.goto(`${ADMIN}/`, { waitUntil: "networkidle" });
-const overview = await admin.locator("main").innerText();
-check("dashboard overview shows today's revenue and the order counts", /11\s?610|11610/.test(overview.replace(/[\s\u202f\u00a0]/g, "")) && /1/.test(overview));
+const overview = (await admin.locator("main").innerText()).replace(/[\s\u202f\u00a0]/g, "");
+const stats = await (await fetch(`${API}/admin/stats/overview`, { headers: { authorization: `Bearer ${token}` } })).json();
+check("dashboard overview shows today's revenue (same number as the API) and the delivered order", stats.revenue.today >= 11610 && overview.includes(String(stats.revenue.today)) && stats.ordersByStatus.delivered >= 1, `today=${stats.revenue.today}`);
 
 // 4) Live notification: a new order arrives while the dashboard is open
 await admin.goto(`${ADMIN}/orders`, { waitUntil: "networkidle" });
