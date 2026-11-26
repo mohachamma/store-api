@@ -186,6 +186,10 @@ const OfferInput = z
     isActive: z.boolean().default(true),
   })
   .superRefine((o, ctx) => {
+    // Every text must have an Arabic version (the database requires it); French/English alone are not enough.
+    for (const k of ["label", "subtitle", "ctaLabel"] as const) {
+      if ((o[k].fr.trim() || o[k].en.trim()) && !o[k].ar.trim()) ctx.addIssue({ code: "custom", path: [k, "ar"], message: "Arabic text is required when another language is filled" });
+    }
     if (o.showCountdown && !o.endsAt) ctx.addIssue({ code: "custom", path: ["endsAt"], message: "A countdown needs an end date" });
     if (o.startsAt && o.endsAt && new Date(o.endsAt) <= new Date(o.startsAt)) ctx.addIssue({ code: "custom", path: ["endsAt"], message: "End must be after start" });
   })

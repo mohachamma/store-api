@@ -51,6 +51,11 @@ export function handleError(err: Error, c: Context) {
   if (err instanceof HTTPException) {
     return c.json(errorBody(codeForStatus(err.status), err.message || "Request failed"), err.status);
   }
+  // Database constraint violations are the client's problem (bad data), not a server crash; never echo database details.
+  const pg = (err as { code?: string }).code;
+  if (pg === "23514" || pg === "22P02" || pg === "22023") return c.json(errorBody("validation_error", "Invalid data"), 422);
+  if (pg === "23505") return c.json(errorBody("conflict", "This value already exists"), 409);
+  if (pg === "23503") return c.json(errorBody("conflict", "This item is linked to other data"), 409);
   console.error("Unhandled error:", err.name, err.message);
   return c.json(errorBody("internal_error", "Internal server error"), 500);
 }

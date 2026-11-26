@@ -139,6 +139,10 @@ describe("offers", () => {
     expect((await call("POST", "/admin/offers", { json: { ...base, startsAt: a, endsAt: b } })).status).toBe(422);
     expect((await call("POST", "/admin/offers", { json: { ...base, title: { ar: "" } } })).status).toBe(422);
     expect((await call("POST", "/admin/offers", { json: { ...base, href: "//evil.example" } })).status).toBe(422);
+    // a French/English text without Arabic used to crash with a 500 (database check); now it is a clear 422
+    const noArabic = await call("POST", "/admin/offers", { json: { ...base, ctaLabel: { ar: "", fr: "", en: "Shop now" } } });
+    expect(noArabic.status).toBe(422);
+    expect(JSON.stringify(noArabic.body)).toMatch(/Arabic/);
   });
 });
 

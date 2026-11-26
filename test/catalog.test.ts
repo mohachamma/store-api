@@ -165,6 +165,10 @@ describe("openapi", () => {
     for (const p of ["/catalog/home", "/catalog/products", "/catalog/products/{slug}", "/catalog/sale", "/catalog/site", "/shipping/wilayas", "/auth/login"]) {
       expect(body.paths[p], p).toBeDefined();
     }
+    // Nullable references must be documented as "X or null" (front-ends generate their types from this).
+    const isNullable = (schema: any) => JSON.stringify(schema).includes('"type":"null"') && !JSON.stringify(schema).includes("Record");
+    expect(isNullable(body.components.schemas.Home.properties.hero)).toBe(true);
+    expect(isNullable(body.components.schemas.Offer.properties.image)).toBe(true);
     expect(Object.keys(body.components.schemas)).toEqual(expect.arrayContaining(["Home", "Product", "ProductSummary", "Offer", "BrandsStrip", "Sale"]));
   });
 });
