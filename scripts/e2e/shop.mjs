@@ -59,11 +59,11 @@ check("sorted by price, high to low, same order as the API", sorted.length > 0 &
 
 // Remove one chip, then clear all
 await p.click("button[aria-label*='المقاس: 42']");
-await p.waitForFunction(() => !location.search.includes("size="));
+await p.waitForFunction(() => !window.location.search.includes("size="));
 await p.waitForLoadState("networkidle");
 check("removing the size chip keeps the other filters", /maxPrice=9000/.test(p.url()) && !/size=/.test(p.url()));
 await p.click("button:has-text('مسح الكل')");
-await p.waitForFunction(() => !location.search.includes("maxPrice"));
+await p.waitForFunction(() => !window.location.search.includes("maxPrice"));
 await p.waitForLoadState("networkidle");
 const back = await api("category=footwear&sort=price_desc");
 check("clear all returns to the category", (await cards(p).count()) === back.length);
