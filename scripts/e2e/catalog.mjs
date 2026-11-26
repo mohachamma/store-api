@@ -41,13 +41,9 @@ check("two photos uploaded (resized in the browser first)", (await p.locator("fo
 await p.click("button:has-text('XS–XL')");
 const rowCount = await p.locator("input[maxlength='10']").count();
 check("quick sizes added 5 variant rows", rowCount === 5);
-// fill price on the first row; the other rows copy it only when added after, so fill all
-const prices = p.locator("input[inputmode='numeric']");
-for (let i = 0; i < rowCount; i++) {
-  await prices.nth(i * 3 + 1).fill("0"); // stock
-}
-const priceInputs = await p.locator("input[inputmode='numeric']").all();
-for (let i = 0; i < rowCount; i++) { await priceInputs[i * 3 + 1].fill(String(3 + i)); await priceInputs[i * 3 + 2].fill("1800"); }
+// Each variant row has three numeric inputs, in this order: stock, price, compare-at price.
+const nums = await p.locator("input[inputmode='numeric']").all();
+for (let i = 0; i < rowCount; i++) { await nums[i * 3].fill(String(3 + i)); await nums[i * 3 + 1].fill("1800"); }
 await p.locator("label:has-text('منشور في المتجر') span[aria-hidden]").click();
 await p.click("button[type=submit]:has-text('حفظ المنتج')");
 await p.waitForURL(`${ADMIN}/products`);
