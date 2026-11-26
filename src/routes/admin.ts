@@ -4,6 +4,7 @@ import type { Db } from "../lib/db.js";
 import { getSetting, DEFAULT_SALE, DEFAULT_STRIP } from "../lib/catalog.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { full, I18nSchema, OptionalI18nSchema, toJson } from "../lib/i18n.js";
+import { extensionFor, sniffImageType } from "../lib/image-sniff.js";
 import { imageUrl, toStoredPath } from "../lib/media.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -275,7 +276,6 @@ adminRoutes.openapi(
 // Image upload
 // ---------------------------------------------------------------------------
 const MAX_UPLOAD = 3 * 1024 * 1024;
-const TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg" };
 
 adminRoutes.openapi(
   createRoute({
@@ -283,7 +283,7 @@ adminRoutes.openapi(
     path: "/admin/uploads",
     tags: ["Admin"],
     security,
-    summary: "Upload an image (PNG, JPEG, WebP, GIF or SVG, up to 3 MB); returns its public URL",
+    summary: "Upload an image (PNG, JPEG, WebP or GIF, up to 3 MB; the dashboard sends it already resized as WebP); returns its public URL. SVG is not accepted.",
     request: { body: { required: true, content: { "multipart/form-data": { schema: z.object({ file: z.any().openapi({ type: "string", format: "binary" }) }) } } } },
     responses: { 200: json(z.object({ url: z.string() }).openapi("UploadResult"), "Stored"), ...errors },
   }),
@@ -291,12 +291,14 @@ adminRoutes.openapi(
     const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
     const file = form["file"];
     if (!(file instanceof File)) throw new ApiError(422, "validation_error", "A file field is required");
-    const ext = TYPES[file.type];
-    if (!ext) throw new ApiError(422, "validation_error", "Unsupported image type");
     if (file.size === 0 || file.size > MAX_UPLOAD) throw new ApiError(422, "validation_error", "Image must be between 1 byte and 3 MB");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // Trust the file's real content, not the declared type: this also rejects HTML/SVG/scripts renamed as images.
+    const type = sniffImageType(bytes);
+    if (!type) throw new ApiError(422, "validation_error", "Unsupported image type (use PNG, JPEG, WebP or GIF)");
     const d = new Date();
-    const path = `uploads/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${randomUUID()}.${ext}`;
-    await c.get("storage").upload(path, new Uint8Array(await file.arrayBuffer()), file.type);
+    const path = `uploads/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${randomUUID()}.${extensionFor(type)}`;
+    await c.get("storage").upload(path, bytes, type);
     return c.json({ url: imageUrl(path) ?? path }, 200);
   },
 );

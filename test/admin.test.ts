@@ -161,23 +161,33 @@ describe("site content and sale page", () => {
 
 describe("uploads", () => {
   const form = (file: File) => { const f = new FormData(); f.append("file", file); return f; };
-  it("stores a valid image and returns its public URL", async () => {
-    const r = await call("POST", "/admin/uploads", { form: form(new File([new Uint8Array([1, 2, 3])], "logo.png", { type: "image/png" })) });
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+  const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50]);
+  it("stores a valid image using its real type and returns its public URL", async () => {
+    const r = await call("POST", "/admin/uploads", { form: form(new File([PNG], "logo.png", { type: "image/png" })) });
     expect(r.status).toBe(200);
     expect(r.body.url).toMatch(/^https:\/\/img\.example\.com\/uploads\/\d{4}\/\d{2}\/[0-9a-f-]+\.png$/);
-    expect(uploads.at(-1)).toMatchObject({ type: "image/png", size: 3 });
-    // the dashboard sends that URL back when saving: only the path is stored
+    expect(uploads.at(-1)).toMatchObject({ type: "image/png", size: PNG.length });
+    // the dashboard sends that URL back when saving: only the key is stored
     const b = await call("POST", "/admin/brands", { json: { name: "WithLogo", logoUrl: r.body.url } });
     expect(b.body.logoUrl).toBe(r.body.url);
     const row = (await pg.query<{ logo_path: string }>(`select logo_path from brands where name = 'WithLogo'`)).rows[0];
     expect(row?.logo_path).toMatch(/^uploads\//);
   });
-  it("rejects wrong types, empty and oversized files, and missing field", async () => {
-    expect((await call("POST", "/admin/uploads", { form: form(new File(["<script>"], "x.html", { type: "text/html" })) })).status).toBe(422);
+  it("accepts the WebP the dashboard produces, whatever the declared type says", async () => {
+    const r = await call("POST", "/admin/uploads", { form: form(new File([WEBP], "photo.bin", { type: "application/octet-stream" })) });
+    expect(r.status).toBe(200);
+    expect(r.body.url).toMatch(/\.webp$/);
+    expect(uploads.at(-1)?.type).toBe("image/webp");
+  });
+  it("rejects fake images (HTML or SVG renamed), SVG, empty and oversized files, and a missing field", async () => {
+    const before = uploads.length;
+    expect((await call("POST", "/admin/uploads", { form: form(new File(["<script>alert(1)</script>"], "x.png", { type: "image/png" })) })).status).toBe(422);
+    expect((await call("POST", "/admin/uploads", { form: form(new File(['<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>'], "x.svg", { type: "image/svg+xml" })) })).status).toBe(422);
     expect((await call("POST", "/admin/uploads", { form: form(new File([], "e.png", { type: "image/png" })) })).status).toBe(422);
-    expect((await call("POST", "/admin/uploads", { form: form(new File([new Uint8Array(3 * 1024 * 1024 + 1)], "big.png", { type: "image/png" })) })).status).toBe(422);
+    expect((await call("POST", "/admin/uploads", { form: form(new File([PNG, new Uint8Array(3 * 1024 * 1024)], "big.png", { type: "image/png" })) })).status).toBe(422);
     expect((await call("POST", "/admin/uploads", { form: new FormData() })).status).toBe(422);
-    expect(uploads.length).toBe(1);
+    expect(uploads.length).toBe(before);
   });
 });
 
