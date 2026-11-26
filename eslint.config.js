@@ -13,4 +13,5 @@ export default tseslint.config(
       "no-console": ["warn", { allow: ["warn", "error", "info"] }],
     },
   },
+  { files: ["scripts/**"], rules: { "no-console": "off" } },
 );

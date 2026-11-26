@@ -8,6 +8,9 @@ import type { AppEnv } from "../lib/types.js";
 // ---------------------------------------------------------------------------
 // Schemas (names are what the front-ends get in their generated types)
 // ---------------------------------------------------------------------------
+/** `.nullable()` on a named (referenced) schema is documented wrongly by the OpenAPI generator, so use an explicit union. */
+const orNull = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, z.null()]);
+
 const ImageSchema = z.object({ url: z.string(), alt: z.string() }).openapi("Image");
 const CategorySchema = z.object({ slug: z.string(), name: z.string() }).openapi("CategoryRef");
 
@@ -69,7 +72,7 @@ const OfferSchema = z
     subtitle: z.string().nullable(),
     ctaLabel: z.string().nullable(),
     href: z.string().nullable(),
-    image: ImageSchema.nullable(),
+    image: orNull(ImageSchema),
     theme: z.enum(["dark", "light"]),
     /** ISO date; when set the storefront shows a countdown. */
     countdownEndsAt: z.string().nullable(),
@@ -83,7 +86,7 @@ const HeroSchema = z
 const HomeSchema = z
   .object({
     announcement: z.string().nullable(),
-    hero: HeroSchema.nullable(),
+    hero: orNull(HeroSchema),
     looks: z.array(LookSchema),
     rows: z.array(CategoryRowSchema),
     brands: z.array(BrandSchema),
@@ -344,7 +347,7 @@ catalogRoutes.openapi(
     tags: ["Catalog"],
     summary: "Active categories that have at least one published product",
     request: { query: Q },
-    responses: { 200: json(z.array(CategorySchema.extend({ image: ImageSchema.nullable(), productCount: z.number().int() })), "OK") },
+    responses: { 200: json(z.array(CategorySchema.extend({ image: orNull(ImageSchema), productCount: z.number().int() })), "OK") },
   }),
   async (c) => {
     const { locale } = c.req.valid("query");

@@ -38,3 +38,21 @@ describe("app", () => {
     expect(bad.headers.get("access-control-allow-origin")).toBeNull();
   });
 });
+
+describe("database errors", () => {
+  it("maps constraint violations to 4xx without leaking database details", async () => {
+    const app = createApp();
+    const boom = (code: string) => () => { throw Object.assign(new Error('violates check constraint "secret_name"'), { code }); };
+    app.get("/t/check", boom("23514"));
+    app.get("/t/unique", boom("23505"));
+    app.get("/t/fk", boom("23503"));
+    app.get("/t/other", boom("XX000"));
+    const body = async (p: string) => { const r = await app.request(p); return { status: r.status, text: await r.text() }; };
+    expect(await body("/t/check")).toMatchObject({ status: 422 });
+    expect(await body("/t/unique")).toMatchObject({ status: 409 });
+    expect(await body("/t/fk")).toMatchObject({ status: 409 });
+    const other = await body("/t/other");
+    expect(other.status).toBe(500);
+    for (const p of ["/t/check", "/t/unique", "/t/fk", "/t/other"]) expect((await body(p)).text).not.toContain("secret_name");
+  });
+});
