@@ -4,7 +4,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { getEnv } from "./env.js";
 import { lazyDb, type Db } from "./lib/db.js";
 import { errorBody, handleError } from "./lib/errors.js";
-import { requireAdmin } from "./lib/auth.js";
+import { requireAdmin, requireUser } from "./lib/auth.js";
 import { buildProviders } from "./lib/delivery/index.js";
 import { chargily } from "./lib/payments/chargily.js";
 import type { PaymentProvider } from "./lib/payments/types.js";
@@ -21,6 +21,7 @@ import { catalogRoutes } from "./routes/catalog.js";
 import { cronRoutes } from "./routes/cron.js";
 import { paymentRoutes } from "./routes/payments.js";
 import { healthRoutes } from "./routes/health.js";
+import { meRoutes } from "./routes/me.js";
 import { orderRoutes } from "./routes/orders.js";
 import { shippingRoutes } from "./routes/shipping.js";
 
@@ -28,7 +29,7 @@ export const OPENAPI_INFO = {
   openapi: "3.1.0",
   info: {
     title: "Store API",
-    version: "0.6.0",
+    version: "0.7.0",
     description: "API for the store storefront (store-web) and admin dashboard (store-admin).",
   },
 } as const;
@@ -78,6 +79,10 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Re
   app.route("/", orderRoutes);
   app.route("/", paymentRoutes);
   app.route("/", cronRoutes);
+  // Signed-in customers only.
+  app.use("/me", requireUser);
+  app.use("/me/*", requireUser);
+  app.route("/", meRoutes);
   // Everything under /admin needs a valid token with role "admin".
   app.use("/admin/*", requireAdmin);
   app.route("/", adminRoutes);

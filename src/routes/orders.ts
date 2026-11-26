@@ -1,6 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery } from "../lib/i18n.js";
+import { optionalUserId } from "../lib/auth.js";
 import { computeQuote, createOrder } from "../lib/orders.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -114,7 +115,8 @@ orderRoutes.openapi(
     const db = c.get("db");
     const pay = c.get("payment");
     if (b.paymentMethod === "chargily" && !pay.configured()) throw new ApiError(422, "payment_unavailable", "Card payment is not available right now");
-    const r = await createOrder(db, { items: b.items, wilayaCode: b.wilayaCode, deliveryType: b.deliveryType, discountCode: b.discountCode, customer: b.customer, paymentMethod: b.paymentMethod });
+    const customerId = await optionalUserId(c.req.header("authorization"), db);
+    const r = await createOrder(db, { customerId, items: b.items, wilayaCode: b.wilayaCode, deliveryType: b.deliveryType, discountCode: b.discountCode, customer: b.customer, paymentMethod: b.paymentMethod });
     let checkoutUrl: string | null = null;
     if (b.paymentMethod === "chargily") {
       try {
