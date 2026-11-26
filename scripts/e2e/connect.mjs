@@ -19,6 +19,11 @@ const web = await (await browser.newContext({ viewport: { width: 1280, height: 9
 const admin = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
 for (const p of [web, admin]) p.on("pageerror", (e) => console.log("PAGEERR", e.message));
 
+// 0) Warm-up: pages built earlier may hold an old snapshot; the first visit makes Next refresh them in the background.
+await web.goto(`${WEB}/en`, { waitUntil: "networkidle" });
+await web.goto(`${WEB}/en/sale`, { waitUntil: "networkidle" });
+await new Promise((r) => setTimeout(r, 4000));
+
 // 1) Storefront renders what the API returns
 await web.goto(`${WEB}/en`, { waitUntil: "networkidle" });
 const home0 = await web.content();
