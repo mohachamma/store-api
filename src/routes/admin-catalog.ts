@@ -173,6 +173,8 @@ const ProductInput = z
     brandId: z.string().uuid().nullable().default(null),
     isPublished: z.boolean().default(false),
     isNew: z.boolean().default(false),
+    /** Who the product is for: the Women's page shows "women" and "unisex" products. */
+    audience: z.enum(["women", "men", "unisex"]).default("unisex"),
     /** Image URLs in display order (the first one is the cover). */
     images: z.array(ImageRef).max(10).default([]),
     variants: z.array(VariantInput).max(60).default([]),
@@ -199,6 +201,7 @@ const ProductDetail = z
     brandId: z.string().uuid().nullable(),
     isPublished: z.boolean(),
     isNew: z.boolean(),
+    audience: z.enum(["women", "men", "unisex"]),
     images: z.array(z.object({ url: z.string() })),
     variants: z.array(z.object({ id: z.string().uuid(), size: z.string(), color: z.string(), sku: z.string().nullable(), stock: z.number().int(), price: z.number().int(), compareAtPrice: z.number().int().nullable() })),
   })
@@ -212,6 +215,7 @@ const ProductRow = z
     categoryName: z.string(),
     isPublished: z.boolean(),
     isNew: z.boolean(),
+    audience: z.enum(["women", "men", "unisex"]),
     /** Cheapest variant price (null while there is no variant). */
     price: z.number().int().nullable(),
     compareAtPrice: z.number().int().nullable(),
@@ -222,8 +226,8 @@ const ProductRow = z
   .openapi("AdminProductRow");
 
 async function loadProduct(q: import("../lib/db.js").Query, id: string) {
-  const p = (await q.query<{ id: string; slug: string; name: unknown; description: unknown; category_id: string; brand_id: string | null; is_published: boolean; is_new: boolean }>(
-    `select id, slug, name, description, category_id, brand_id, is_published, is_new from public.products where id = $1`, [id]))[0];
+  const p = (await q.query<{ id: string; slug: string; name: unknown; description: unknown; category_id: string; brand_id: string | null; is_published: boolean; is_new: boolean; audience: "women" | "men" | "unisex" }>(
+    `select id, slug, name, description, category_id, brand_id, is_published, is_new, audience from public.products where id = $1`, [id]))[0];
   if (!p) throw new ApiError(404, "not_found", "Product not found");
   const [images, variants] = await Promise.all([
     q.query<{ path: string }>(`select path from public.product_images where product_id = $1 order by sort_order, id`, [id]),
@@ -232,7 +236,7 @@ async function loadProduct(q: import("../lib/db.js").Query, id: string) {
         order by coalesce(array_position(array['XXS','XS','S','M','L','XL','XXL','XXXL'], v.size), 100), v.size, v.color`, [id]),
   ]);
   return {
-    id: p.id, slug: p.slug, name: full(p.name), description: full(p.description), categoryId: p.category_id, brandId: p.brand_id, isPublished: p.is_published, isNew: p.is_new,
+    id: p.id, slug: p.slug, name: full(p.name), description: full(p.description), categoryId: p.category_id, brandId: p.brand_id, isPublished: p.is_published, isNew: p.is_new, audience: p.audience,
     images: images.map((i) => ({ url: imageUrl(i.path) ?? "" })),
     variants: variants.map((v) => ({ id: v.id, size: v.size, color: v.color, sku: v.sku, stock: Number(v.stock), price: Number(v.price), compareAtPrice: v.compare_at_price ? Number(v.compare_at_price) : null })),
   };
@@ -245,15 +249,15 @@ async function saveProduct(db: import("../lib/db.js").Db, id: string | null, b: 
     let productId = id;
     if (productId) {
       const r = await q.query(
-        `update public.products set name = $2::jsonb, description = $3::jsonb, category_id = $4, brand_id = $5, is_published = $6, is_new = $7 where id = $1 returning id`,
-        [productId, toJson(b.name), toJson(b.description), b.categoryId, b.brandId, b.isPublished, b.isNew],
+        `update public.products set name = $2::jsonb, description = $3::jsonb, category_id = $4, brand_id = $5, is_published = $6, is_new = $7, audience = $8 where id = $1 returning id`,
+        [productId, toJson(b.name), toJson(b.description), b.categoryId, b.brandId, b.isPublished, b.isNew, b.audience],
       );
       if (!r.length) throw new ApiError(404, "not_found", "Product not found");
     } else {
       const slug = await uniqueSlug(q, "products", slugify(slugSource(b.name), "product"));
       productId = (await q.query<{ id: string }>(
-        `insert into public.products (slug, name, description, category_id, brand_id, is_published, is_new) values ($1, $2::jsonb, $3::jsonb, $4, $5, $6, $7) returning id`,
-        [slug, toJson(b.name), toJson(b.description), b.categoryId, b.brandId, b.isPublished, b.isNew],
+        `insert into public.products (slug, name, description, category_id, brand_id, is_published, is_new, audience) values ($1, $2::jsonb, $3::jsonb, $4, $5, $6, $7, $8) returning id`,
+        [slug, toJson(b.name), toJson(b.description), b.categoryId, b.brandId, b.isPublished, b.isNew, b.audience],
       ))[0]!.id;
     }
     // Images: replaced in the given order.
@@ -283,7 +287,7 @@ async function saveProduct(db: import("../lib/db.js").Db, id: string | null, b: 
 adminCatalogRoutes.openapi(
   createRoute({
     method: "get", path: "/admin/products", tags: ["Admin"], security, summary: "Products (published and drafts) with search and filters",
-    request: { query: z.object({ locale: LocaleQuery, q: z.string().trim().max(80).optional(), categoryId: z.string().uuid().optional(), status: z.enum(["published", "draft"]).optional(), limit: z.coerce.number().int().min(1).max(100).default(30), offset: z.coerce.number().int().min(0).default(0) }) },
+    request: { query: z.object({ locale: LocaleQuery, q: z.string().trim().max(80).optional(), categoryId: z.string().uuid().optional(), status: z.enum(["published", "draft"]).optional(), audience: z.enum(["women", "men", "unisex"]).optional(), limit: z.coerce.number().int().min(1).max(100).default(30), offset: z.coerce.number().int().min(0).default(0) }) },
     responses: { 200: json(z.object({ items: z.array(ProductRow), total: z.number().int() }).openapi("AdminProductList"), "OK"), ...errors },
   }),
   async (c) => {
@@ -292,6 +296,7 @@ adminCatalogRoutes.openapi(
     const params: unknown[] = [];
     const add = (v: unknown) => (params.push(v), `$${params.length}`);
     if (f.categoryId) where.push(`p.category_id = ${add(f.categoryId)}`);
+    if (f.audience) where.push(`p.audience = ${add(f.audience)}`);
     if (f.status) where.push(f.status === "published" ? "p.is_published" : "not p.is_published");
     if (f.q) {
       const l = add(like(f.q));
@@ -300,8 +305,8 @@ adminCatalogRoutes.openapi(
     const w = where.length ? `where ${where.join(" and ")}` : "";
     const db = c.get("db");
     const [rows, count] = await Promise.all([
-      db.query<{ id: string; slug: string; name: unknown; cat: unknown; is_published: boolean; is_new: boolean; price: number | null; compare: number | null; stock: number; n: number; path: string | null }>(
-        `select p.id, p.slug, p.name, c.name as cat, p.is_published, p.is_new, mv.price, mv.compare_at_price as compare,
+      db.query<{ id: string; slug: string; name: unknown; cat: unknown; is_published: boolean; is_new: boolean; audience: "women" | "men" | "unisex"; price: number | null; compare: number | null; stock: number; n: number; path: string | null }>(
+        `select p.id, p.slug, p.name, c.name as cat, p.is_published, p.is_new, p.audience, mv.price, mv.compare_at_price as compare,
                 (select coalesce(sum(v.stock), 0)::int from public.product_variants v where v.product_id = p.id) as stock,
                 (select count(*)::int from public.product_variants v where v.product_id = p.id) as n,
                 (select i.path from public.product_images i where i.product_id = p.id order by i.sort_order, i.id limit 1) as path
@@ -311,7 +316,7 @@ adminCatalogRoutes.openapi(
       db.query<{ n: number }>(`select count(*)::int as n from public.products p ${w}`, params.slice(0, params.length - 2)),
     ]);
     return c.json({
-      items: rows.map((r) => ({ id: r.id, slug: r.slug, name: pick(r.name, f.locale as Locale), categoryName: pick(r.cat, f.locale as Locale), isPublished: r.is_published, isNew: r.is_new, price: r.price === null ? null : Number(r.price), compareAtPrice: r.compare ? Number(r.compare) : null, totalStock: Number(r.stock), variantCount: Number(r.n), image: imageUrl(r.path) })),
+      items: rows.map((r) => ({ id: r.id, slug: r.slug, name: pick(r.name, f.locale as Locale), categoryName: pick(r.cat, f.locale as Locale), isPublished: r.is_published, isNew: r.is_new, audience: r.audience, price: r.price === null ? null : Number(r.price), compareAtPrice: r.compare ? Number(r.compare) : null, totalStock: Number(r.stock), variantCount: Number(r.n), image: imageUrl(r.path) })),
       total: Number(count[0]?.n ?? 0),
     }, 200);
   },
@@ -336,6 +341,19 @@ adminCatalogRoutes.openapi(
     return c.json({ ok: true as const }, 200);
   },
 );
+adminCatalogRoutes.openapi(
+  createRoute({
+    method: "post", path: "/admin/products/audience", tags: ["Admin"], security, summary: "Set who several products are for (women / men / unisex) at once",
+    request: { body: body(z.object({ ids: z.array(z.string().uuid()).min(1).max(200), audience: z.enum(["women", "men", "unisex"]) })) },
+    responses: { 200: json(z.object({ updated: z.number().int() }), "OK"), ...errors },
+  }),
+  async (c) => {
+    const { ids, audience } = c.req.valid("json");
+    const r = await c.get("db").query(`update public.products set audience = $2 where id = any($1::uuid[]) returning id`, [ids, audience]);
+    return c.json({ updated: r.length }, 200);
+  },
+);
+
 adminCatalogRoutes.openapi(
   createRoute({
     method: "post", path: "/admin/products/publish", tags: ["Admin"], security, summary: "Publish or hide several products at once (publishing skips products without a variant or an image)",

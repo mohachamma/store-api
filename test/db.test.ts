@@ -110,7 +110,7 @@ describe("row level security", () => {
   it("only exposes whitelisted site settings", async () => {
     await db.exec(`insert into site_settings (key, value) values ('secret_note', '"x"')`);
     const keys = await as("anon", {}, async () => (await db.query<{ key: string }>("select key from site_settings order by key")).rows.map((r) => r.key));
-    expect(keys).toEqual(["announcement", "brands_strip", "draft_notice", "newsletter", "sale_page", "store_info", "why_us"]);
+    expect(keys).toEqual(["announcement", "brands_strip", "draft_notice", "newsletter", "sale_page", "store_info", "why_us", "women_page"]);
     await db.exec(`delete from site_settings where key = 'secret_note'`);
   });
 
