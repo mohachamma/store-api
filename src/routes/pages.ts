@@ -66,6 +66,9 @@ const StoreInfoSchema = z
     hours: z.string().nullable(),
     /** https://wa.me link built from the WhatsApp number; null when none is set. */
     whatsappUrl: z.string().nullable(),
+    /** Title and description of the shop for search engines and social cards (edited in the dashboard); null = use the defaults. */
+    siteTitle: z.string().nullable(),
+    siteDescription: z.string().nullable(),
   })
   .openapi("StoreInfo");
 
@@ -73,7 +76,7 @@ pagesRoutes.openapi(
   createRoute({ method: "get", path: "/catalog/store-info", tags: ["Pages"], summary: "Contact details of the store (phone, WhatsApp, email, address, opening hours)", request: { query: Q }, responses: { 200: json(StoreInfoSchema, "OK") } }),
   async (c) => {
     const { locale } = c.req.valid("query");
-    const v = ((await getSetting(c.get("db"), "store_info")) ?? {}) as { phone?: string; whatsapp?: string; email?: string; address?: unknown; hours?: unknown };
+    const v = ((await getSetting(c.get("db"), "store_info")) ?? {}) as { phone?: string; whatsapp?: string; email?: string; address?: unknown; hours?: unknown; site_title?: unknown; site_description?: unknown };
     const wa = v.whatsapp?.trim();
     return c.json(
       {
@@ -82,6 +85,8 @@ pagesRoutes.openapi(
         address: pickOrNull(v.address, locale),
         hours: pickOrNull(v.hours, locale),
         whatsappUrl: wa ? `https://wa.me/${toWhatsappNumber(wa)}` : null,
+        siteTitle: pickOrNull(v.site_title, locale),
+        siteDescription: pickOrNull(v.site_description, locale),
       },
       200,
     );
