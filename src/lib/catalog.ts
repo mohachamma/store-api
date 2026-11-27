@@ -27,7 +27,7 @@ export interface SummaryRow {
 export const SUMMARY_SQL = `
   select p.id, p.slug, p.name, p.is_new, c.slug as category_slug, c.name as category_name,
          mv.price, mv.compare_at_price, img.path as image_path, img.alt as image_alt,
-         (select jsonb_agg(jsonb_build_object('color', x.color, 'color_hex', x.color_hex) order by x.first_id)
+         (select jsonb_agg(jsonb_build_object('color', x.color, 'color_hex', x.color_hex) order by lower(x.color))
             from (select distinct on (lower(v.color)) v.color, v.color_hex, v.id as first_id from public.product_variants v
                    where v.product_id = p.id and v.color <> '' order by lower(v.color), v.id) x) as colors
     from public.products p

@@ -253,7 +253,9 @@ adminOrderRoutes.openapi(
           `update public.orders set status = $2::public.order_status,
                   payment_status = case when $2 = 'delivered' and payment_method = 'cod' then 'paid'::public.payment_status
                                         when $2 = 'returned' and payment_status = 'paid' then 'refunded'::public.payment_status
-                                        else payment_status end
+                                        else payment_status end,
+                  delivered_at = case when $2 = 'delivered' then now() else delivered_at end,
+                  returned_at = case when $2 = 'returned' then now() else returned_at end
             where id = $1`,
           [id, status],
         );
