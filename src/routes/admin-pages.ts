@@ -59,25 +59,28 @@ const AdminStoreInfo = z
     email: z.union([z.literal(""), z.string().trim().email().max(200)]),
     address: OptionalI18nSchema,
     hours: OptionalI18nSchema,
+    /** Shop title / description for Google and social cards. */
+    siteTitle: OptionalI18nSchema.default({ ar: "", fr: "", en: "" }),
+    siteDescription: OptionalI18nSchema.default({ ar: "", fr: "", en: "" }),
   })
   .superRefine((o, ctx) => {
     if (o.whatsapp && !normalizePhone(o.whatsapp)) ctx.addIssue({ code: "custom", path: ["whatsapp"], message: "Enter a valid Algerian phone number" });
-    for (const k of ["address", "hours"] as const) if ((o[k].fr.trim() || o[k].en.trim()) && !o[k].ar.trim()) ctx.addIssue({ code: "custom", path: [k, "ar"], message: "Arabic text is required when another language is filled" });
+    for (const k of ["address", "hours", "siteTitle", "siteDescription"] as const) if ((o[k].fr.trim() || o[k].en.trim()) && !o[k].ar.trim()) ctx.addIssue({ code: "custom", path: [k, "ar"], message: "Arabic text is required when another language is filled" });
   })
   .openapi("AdminStoreInfo");
 
 adminPagesRoutes.openapi(
   createRoute({ method: "get", path: "/admin/store-info", tags: ["Admin"], security, summary: "Contact details shown on the Contact page", responses: { 200: json(AdminStoreInfo, "OK"), ...errors } }),
   async (c) => {
-    const v = ((await getSetting(c.get("db"), "store_info")) ?? {}) as { phone?: string; whatsapp?: string; email?: string; address?: unknown; hours?: unknown };
-    return c.json({ phone: v.phone ?? "", whatsapp: v.whatsapp ?? "", email: v.email ?? "", address: full(v.address), hours: full(v.hours) }, 200);
+    const v = ((await getSetting(c.get("db"), "store_info")) ?? {}) as { phone?: string; whatsapp?: string; email?: string; address?: unknown; hours?: unknown; site_title?: unknown; site_description?: unknown };
+    return c.json({ phone: v.phone ?? "", whatsapp: v.whatsapp ?? "", email: v.email ?? "", address: full(v.address), hours: full(v.hours), siteTitle: full(v.site_title), siteDescription: full(v.site_description) }, 200);
   },
 );
 adminPagesRoutes.openapi(
   createRoute({ method: "put", path: "/admin/store-info", tags: ["Admin"], security, summary: "Save the contact details", request: { body: body(AdminStoreInfo) }, responses: { 200: json(Ok, "Saved"), ...errors } }),
   async (c) => {
     const b = c.req.valid("json");
-    const value = { phone: b.phone, whatsapp: b.whatsapp ? normalizePhone(b.whatsapp) : "", email: b.email, address: JSON.parse(toJson(b.address) ?? "{}"), hours: JSON.parse(toJson(b.hours) ?? "{}") };
+    const value = { phone: b.phone, whatsapp: b.whatsapp ? normalizePhone(b.whatsapp) : "", email: b.email, address: JSON.parse(toJson(b.address) ?? "{}"), hours: JSON.parse(toJson(b.hours) ?? "{}"), site_title: JSON.parse(toJson(b.siteTitle) ?? "{}"), site_description: JSON.parse(toJson(b.siteDescription) ?? "{}") };
     await c.get("db").query(`insert into public.site_settings (key, value) values ('store_info', $1::jsonb) on conflict (key) do update set value = excluded.value`, [JSON.stringify(value)]);
     return c.json({ ok: true as const }, 200);
   },

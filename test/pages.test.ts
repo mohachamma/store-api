@@ -82,10 +82,10 @@ describe("pages are edited from the dashboard", () => {
 
 describe("contact details", () => {
   it("are empty at first, then show what the owner saves (with a WhatsApp link)", async () => {
-    expect((await api("GET", "/catalog/store-info")).body).toEqual({ phone: null, email: null, address: null, hours: null, whatsappUrl: null });
-    const save = await admin("PUT", "/admin/store-info", { phone: "0550 12 34 56", whatsapp: "0550123456", email: "hello@store.dz", address: { ar: "الجزائر العاصمة", fr: "Alger", en: "" }, hours: { ar: "كل يوم 9–18", fr: "", en: "" } });
+    expect((await api("GET", "/catalog/store-info")).body).toEqual({ phone: null, email: null, address: null, hours: null, whatsappUrl: null, siteTitle: null, siteDescription: null });
+    const save = await admin("PUT", "/admin/store-info", { phone: "0550 12 34 56", whatsapp: "0550123456", email: "hello@store.dz", address: { ar: "الجزائر العاصمة", fr: "Alger", en: "" }, hours: { ar: "كل يوم 9–18", fr: "", en: "" }, siteTitle: { ar: "متجر الجزائر", fr: "Store Alger", en: "" } });
     expect(save.status).toBe(200);
-    expect((await api("GET", "/catalog/store-info?locale=fr")).body).toEqual({ phone: "0550 12 34 56", email: "hello@store.dz", address: "Alger", hours: "كل يوم 9–18", whatsappUrl: "https://wa.me/213550123456" });
+    expect((await api("GET", "/catalog/store-info?locale=fr")).body).toEqual({ phone: "0550 12 34 56", email: "hello@store.dz", address: "Alger", hours: "كل يوم 9–18", whatsappUrl: "https://wa.me/213550123456", siteTitle: "Store Alger", siteDescription: null });
   });
   it("refuses a bad WhatsApp number, a bad email, and French without Arabic", async () => {
     const base = { phone: "", whatsapp: "", email: "", address: { ar: "", fr: "", en: "" }, hours: { ar: "", fr: "", en: "" } };
