@@ -1,3 +1,4 @@
+/* global getComputedStyle, window */
 /**
  * End-to-end check of the side menu (storefront + API running against `npm run dev:local`), phone size:
  * the hamburger is on every kind of page, the drawer slides in from the reading-start side, lists what the dashboard manages,
@@ -20,12 +21,19 @@ await p.goto(`${WEB}/ar`, { waitUntil: "networkidle" });
 await open();
 const box = await p.locator("dialog[open]").boundingBox();
 const vw = p.viewportSize().width;
-check("Arabic: the drawer is on the right (reading start) and does not cover the whole screen", box.x + box.width >= vw - 1 && box.width < vw - 20, `x=${Math.round(box.x)} w=${Math.round(box.width)}`);
+const barTop = (await p.locator("nav[aria-label] > div").last().boundingBox()).y;
+check("the menu covers the full page width", box.x <= 1 && box.width >= vw - 1, `x=${Math.round(box.x)} w=${Math.round(box.width)}`);
+check("the menu ends exactly at the top of the tab bar (no gap, bar not covered)", Math.abs(box.y + box.height - barTop) <= 2, `menu bottom=${Math.round(box.y + box.height)} bar top=${Math.round(barTop)}`);
 const links = await p.locator("dialog[open] a").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
 const has = (h) => links.some((l) => l.endsWith(h));
-check("menu has home, women, all products, sale, favorites, cart, account", ["/ar", "/women", "/search", "/sale", "/favorites", "/cart", "/account"].every((h) => has(h) || (h === "/ar" && links.some((l) => l === "/ar" || l === "/ar/"))));
+check("menu has home, women, men, all products and sale", ["/women", "/men", "/search", "/sale"].every(has) && links.some((l) => l === "/ar" || l === "/ar/"));
 check("menu lists the categories and the collection from the API", has("category=outerwear") && has("category=footwear") && has("/collections/winter"));
-check("menu links the five legal pages and contact", ["terms", "privacy", "returns", "shipping", "cod"].every((s) => has(`/legal/${s}`)) && has("/contact"));
+check("menu no longer repeats favorites/cart/account or the legal pages (they are in the tab bar and footer)", !has("/favorites") && !has("/cart") && !has("/account") && !["terms", "privacy", "returns", "shipping", "cod"].some((x) => has(`/legal/${x}`)));
+check("menu keeps only Contact under information", has("/contact"));
+const catText = await p.locator("dialog[open] a[href*='category=outerwear']").innerText();
+check("categories show names only, no numbers", !/\d/.test(catText), JSON.stringify(catText));
+const glass = await p.locator("dialog[open] .menu-glass").evaluate((el) => ({ f: getComputedStyle(el).backdropFilter, bg: getComputedStyle(el).backgroundImage, col: getComputedStyle(el).backgroundColor }));
+check("the menu is evenly frosted glass over the whole page (blur + translucent white)", /blur/.test(glass.f) && /rgba\(255, 255, 255, 0\.45\)/.test(glass.bg + glass.col), glass.f + " " + glass.col);
 
 // Go to a category from the menu
 await p.click("dialog[open] a[href*='category=footwear']");
@@ -47,17 +55,26 @@ await p.keyboard.press("Escape");
 await p.waitForTimeout(200);
 check("Escape closes the menu", (await isOpen()) === 0);
 
-// Tapping the dark area closes it
+// The close button works
 await open();
-await p.mouse.click(15, 300);
+await p.click("dialog[open] button[aria-label]");
 await p.waitForTimeout(200);
-check("tapping outside closes the menu", (await isOpen()) === 0);
+check("the close button closes the menu", (await isOpen()) === 0);
 
-// Cart page works too, English opens from the left
+// Nothing jumps behind the menu: scroll position and layout stay the same while it is open
+await p.goto(`${WEB}/en`, { waitUntil: "networkidle" });
+await p.evaluate(() => window.scrollTo(0, 400));
+await p.waitForTimeout(200);
+const before = await p.evaluate(() => ({ y: window.scrollY, w: document.documentElement.clientWidth, h: document.body.getBoundingClientRect().height }));
+await open();
+const during = await p.evaluate(() => ({ y: window.scrollY, w: document.documentElement.clientWidth, h: document.body.getBoundingClientRect().height }));
+await p.keyboard.press("Escape");
+await p.waitForTimeout(250);
+const after = await p.evaluate(() => ({ y: window.scrollY, w: document.documentElement.clientWidth }));
+check("the page behind does not shift while the menu is open (scroll and width unchanged)", before.y === during.y && before.w === during.w && Math.abs(before.h - during.h) < 1 && after.y === before.y, JSON.stringify({ before, during, after }));
+
 await p.goto(`${WEB}/en/cart`, { waitUntil: "networkidle" });
 await open();
-const b2 = await p.locator("dialog[open]").boundingBox();
-check("English: the drawer is on the left", b2.x <= 1, `x=${Math.round(b2.x)}`);
 await p.click("dialog[open] a[href$='/en/contact']").catch(async () => p.click("dialog[open] a[href$='/contact']"));
 await p.waitForURL("**/contact");
 check("menu works on the cart page too (to Contact)", /contact$/.test(p.url()));
