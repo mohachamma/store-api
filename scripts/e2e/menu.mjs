@@ -32,8 +32,8 @@ check("menu no longer repeats favorites/cart/account or the legal pages (they ar
 check("menu keeps only Contact under information", has("/contact"));
 const catText = await p.locator("dialog[open] a[href*='category=outerwear']").innerText();
 check("categories show names only, no numbers", !/\d/.test(catText), JSON.stringify(catText));
-const glass = await p.locator("dialog[open] .menu-glass").evaluate((el) => ({ f: getComputedStyle(el).backdropFilter, bg: getComputedStyle(el).backgroundImage, m: "" }));
-check("the glass blurs the page and its tint is graded top to bottom (gradient)", /blur/.test(glass.f) && /linear-gradient/.test(glass.bg), glass.f);
+const glass = await p.locator("dialog[open] .menu-glass").evaluate((el) => ({ f: getComputedStyle(el).backdropFilter, bg: getComputedStyle(el).backgroundImage }));
+check("Arabic: the glass is clear at the right (start) and fully opaque at the far (left) edge", /blur/.test(glass.f) && /270deg/.test(glass.bg) && /0\.04/.test(glass.bg) && /rgb\(255, 255, 255\) 100%/.test(glass.bg), glass.bg.slice(0, 130));
 
 // Go to a category from the menu
 await p.click("dialog[open] a[href*='category=footwear']");
