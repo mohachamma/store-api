@@ -157,6 +157,8 @@ const VariantInput = z
     id: z.string().uuid().optional(),
     size: z.string().trim().min(1).max(10),
     color: z.string().trim().max(40).default(""),
+    /** Exact color of the round swatch, "#rrggbb" (null = guessed from the color name when possible). */
+    colorHex: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a color like #c9ad82").nullable().default(null),
     sku: z.string().trim().max(40).nullable().default(null),
     stock: z.number().int().min(0).max(100000),
     price: z.number().int().min(1).max(10_000_000),
@@ -177,6 +179,8 @@ const ProductInput = z
     audience: z.enum(["women", "men", "unisex"]).default("unisex"),
     /** Image URLs in display order (the first one is the cover). */
     images: z.array(ImageRef).max(10).default([]),
+    /** Optional, same length and order as `images`: the color name each photo belongs to (null = every color). */
+    imageColors: z.array(z.string().trim().max(40).nullable()).max(10).optional(),
     variants: z.array(VariantInput).max(60).default([]),
   })
   .superRefine((p, ctx) => {
@@ -202,8 +206,8 @@ const ProductDetail = z
     isPublished: z.boolean(),
     isNew: z.boolean(),
     audience: z.enum(["women", "men", "unisex"]),
-    images: z.array(z.object({ url: z.string() })),
-    variants: z.array(z.object({ id: z.string().uuid(), size: z.string(), color: z.string(), sku: z.string().nullable(), stock: z.number().int(), price: z.number().int(), compareAtPrice: z.number().int().nullable() })),
+    images: z.array(z.object({ url: z.string(), color: z.string().nullable() })),
+    variants: z.array(z.object({ id: z.string().uuid(), size: z.string(), color: z.string(), colorHex: z.string().nullable(), sku: z.string().nullable(), stock: z.number().int(), price: z.number().int(), compareAtPrice: z.number().int().nullable() })),
   })
   .openapi("AdminProduct");
 
@@ -230,15 +234,15 @@ async function loadProduct(q: import("../lib/db.js").Query, id: string) {
     `select id, slug, name, description, category_id, brand_id, is_published, is_new, audience from public.products where id = $1`, [id]))[0];
   if (!p) throw new ApiError(404, "not_found", "Product not found");
   const [images, variants] = await Promise.all([
-    q.query<{ path: string }>(`select path from public.product_images where product_id = $1 order by sort_order, id`, [id]),
-    q.query<{ id: string; size: string; color: string; sku: string | null; stock: number; price: number; compare_at_price: number | null }>(
-      `select v.id, v.size, v.color, v.sku, v.stock, v.price, v.compare_at_price from public.product_variants v where v.product_id = $1
+    q.query<{ path: string; color: string | null }>(`select path, color from public.product_images where product_id = $1 order by sort_order, id`, [id]),
+    q.query<{ id: string; size: string; color: string; color_hex: string | null; sku: string | null; stock: number; price: number; compare_at_price: number | null }>(
+      `select v.id, v.size, v.color, v.color_hex, v.sku, v.stock, v.price, v.compare_at_price from public.product_variants v where v.product_id = $1
         order by coalesce(array_position(array['XXS','XS','S','M','L','XL','XXL','XXXL'], v.size), 100), v.size, v.color`, [id]),
   ]);
   return {
     id: p.id, slug: p.slug, name: full(p.name), description: full(p.description), categoryId: p.category_id, brandId: p.brand_id, isPublished: p.is_published, isNew: p.is_new, audience: p.audience,
-    images: images.map((i) => ({ url: imageUrl(i.path) ?? "" })),
-    variants: variants.map((v) => ({ id: v.id, size: v.size, color: v.color, sku: v.sku, stock: Number(v.stock), price: Number(v.price), compareAtPrice: v.compare_at_price ? Number(v.compare_at_price) : null })),
+    images: images.map((i) => ({ url: imageUrl(i.path) ?? "", color: i.color })),
+    variants: variants.map((v) => ({ id: v.id, size: v.size, color: v.color, colorHex: v.color_hex, sku: v.sku, stock: Number(v.stock), price: Number(v.price), compareAtPrice: v.compare_at_price ? Number(v.compare_at_price) : null })),
   };
 }
 
@@ -263,7 +267,7 @@ async function saveProduct(db: import("../lib/db.js").Db, id: string | null, b: 
     // Images: replaced in the given order.
     await q.query(`delete from public.product_images where product_id = $1`, [productId]);
     for (const [i, url] of b.images.entries()) {
-      await q.query(`insert into public.product_images (product_id, path, sort_order) values ($1, $2, $3)`, [productId, toStoredPath(url), i]);
+      await q.query(`insert into public.product_images (product_id, path, sort_order, color) values ($1, $2, $3, $4)`, [productId, toStoredPath(url), i, b.imageColors?.[i]?.trim() || null]);
     }
     // Variants: update the known ones, insert the new ones, remove the ones that disappeared.
     const keep = b.variants.filter((v) => v.id).map((v) => v.id!);
@@ -274,9 +278,9 @@ async function saveProduct(db: import("../lib/db.js").Db, id: string | null, b: 
     for (const v of b.variants) {
       const sku = v.sku?.trim() ? v.sku.trim().toUpperCase() : null;
       if (v.id) {
-        await q.query(`update public.product_variants set size = $2, color = $3, sku = $4, stock = $5, price = $6, compare_at_price = $7 where id = $1`, [v.id, v.size, v.color, sku, v.stock, v.price, v.compareAtPrice]);
+        await q.query(`update public.product_variants set size = $2, color = $3, sku = $4, stock = $5, price = $6, compare_at_price = $7, color_hex = $8 where id = $1`, [v.id, v.size, v.color, sku, v.stock, v.price, v.compareAtPrice, v.colorHex?.toLowerCase() ?? null]);
       } else {
-        await q.query(`insert into public.product_variants (product_id, size, color, sku, stock, price, compare_at_price) values ($1, $2, $3, $4, $5, $6, $7)`, [productId, v.size, v.color, sku, v.stock, v.price, v.compareAtPrice]);
+        await q.query(`insert into public.product_variants (product_id, size, color, sku, stock, price, compare_at_price, color_hex) values ($1, $2, $3, $4, $5, $6, $7, $8)`, [productId, v.size, v.color, sku, v.stock, v.price, v.compareAtPrice, v.colorHex?.toLowerCase() ?? null]);
       }
     }
     return productId;

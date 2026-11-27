@@ -1,5 +1,6 @@
 import type { Db } from "./db.js";
 import { pick, pickOrNull, type Locale } from "./i18n.js";
+import { swatchHex } from "./colors.js";
 import { imageUrl } from "./media.js";
 
 /** Sizes sort in garment order, then numerically (shoes). */
@@ -18,12 +19,17 @@ export interface SummaryRow {
   compare_at_price: number | null;
   image_path: string | null;
   image_alt: unknown;
+  /** Distinct colors of the product's variants (one entry per color name). */
+  colors: { color: string; color_hex: string | null }[] | null;
 }
 
 /** Published products with their cheapest variant and first image. Append WHERE / ORDER BY yourself. */
 export const SUMMARY_SQL = `
   select p.id, p.slug, p.name, p.is_new, c.slug as category_slug, c.name as category_name,
-         mv.price, mv.compare_at_price, img.path as image_path, img.alt as image_alt
+         mv.price, mv.compare_at_price, img.path as image_path, img.alt as image_alt,
+         (select jsonb_agg(jsonb_build_object('color', x.color, 'color_hex', x.color_hex) order by x.first_id)
+            from (select distinct on (lower(v.color)) v.color, v.color_hex, v.id as first_id from public.product_variants v
+                   where v.product_id = p.id and v.color <> '' order by lower(v.color), v.id) x) as colors
     from public.products p
     join public.categories c on c.id = p.category_id and c.is_active
     join lateral (select v.price, v.compare_at_price from public.product_variants v
@@ -43,6 +49,7 @@ export function toSummary(r: SummaryRow, locale: Locale) {
     image: { url: imageUrl(r.image_path) ?? "", alt: pickOrNull(r.image_alt, locale) ?? name },
     category: { slug: r.category_slug, name: pick(r.category_name, locale) },
     isNew: Boolean(r.is_new),
+    colors: (r.colors ?? []).map((c) => ({ name: c.color, hex: swatchHex(c.color, c.color_hex) })),
   };
 }
 
