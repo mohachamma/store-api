@@ -194,6 +194,22 @@ catalogRoutes.openapi(
   },
 );
 
+catalogRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/catalog/collections",
+    tags: ["Catalog"],
+    summary: "Published collections in display order (for menus)",
+    request: { query: Q },
+    responses: { 200: json(z.array(z.object({ slug: z.string(), title: z.string() })).openapi("CollectionLinks"), "OK") },
+  }),
+  async (c) => {
+    const { locale } = c.req.valid("query");
+    const rows = await c.get("db").query<{ slug: string; title: unknown }>(`select slug, title from public.collections where is_published order by sort_order, created_at, id`);
+    return c.json(rows.map((r) => ({ slug: r.slug, title: pick(r.title, locale) })), 200);
+  },
+);
+
 // ---------------------------------------------------------------------------
 // GET /catalog/collections/{slug}
 // ---------------------------------------------------------------------------
@@ -237,6 +253,7 @@ const ListQuery = z.object({
   q: z.string().trim().max(100).optional().openapi({ description: "Search in product names (any language)" }),
   category: z.string().optional().openapi({ description: "Category slug" }),
   size: z.string().max(10).optional(),
+  audience: z.enum(["women", "men"]).optional().openapi({ description: "Products for women (or men); unisex products appear in both" }),
   color: z.string().max(40).optional(),
   minPrice: z.coerce.number().int().min(0).optional(),
   maxPrice: z.coerce.number().int().min(0).optional(),
@@ -245,7 +262,7 @@ const ListQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
-type ListFilters = Pick<z.infer<typeof ListQuery>, "q" | "category" | "size" | "color" | "minPrice" | "maxPrice">;
+type ListFilters = Pick<z.infer<typeof ListQuery>, "q" | "category" | "size" | "color" | "minPrice" | "maxPrice" | "audience">;
 
 /** WHERE clauses shared by the product list and the filter options. `skip` leaves a dimension out (so its own options stay visible). */
 function listWhere(q: ListFilters, skip: Array<keyof ListFilters> = []) {
@@ -254,6 +271,7 @@ function listWhere(q: ListFilters, skip: Array<keyof ListFilters> = []) {
   const add = (v: unknown) => (params.push(v), `$${params.length}`);
   const use = (k: keyof ListFilters) => !skip.includes(k);
 
+  if (q.audience) where.push(`p.audience in ('unisex', ${add(q.audience)})`);
   if (q.category && use("category")) where.push(`c.slug = ${add(q.category)}`);
   if (q.q && use("q")) {
     const like = add(`%${q.q.replace(/[\\%_]/g, "\\$&")}%`);

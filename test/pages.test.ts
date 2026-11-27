@@ -94,3 +94,15 @@ describe("contact details", () => {
     expect((await admin("PUT", "/admin/store-info", { ...base, address: { ar: "", fr: "Alger", en: "" } })).status).toBe(422);
   });
 });
+
+describe("collections for menus", () => {
+  it("lists published collections in order, translated, and hides unpublished ones", async () => {
+    const list = (await api("GET", "/catalog/collections?locale=fr")).body as { slug: string; title: string }[];
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.every((c) => c.slug && c.title)).toBe(true);
+    await pg.query(`update collections set is_published = false where slug = $1`, [list[0]!.slug]);
+    const after = (await api("GET", "/catalog/collections")).body as { slug: string }[];
+    expect(after.map((c) => c.slug)).not.toContain(list[0]!.slug);
+    await pg.query(`update collections set is_published = true where slug = $1`, [list[0]!.slug]);
+  });
+});

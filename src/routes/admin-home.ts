@@ -154,3 +154,65 @@ adminHomeRoutes.openapi(
     return c.json({ ok: true as const }, 200);
   },
 );
+
+// ---------------------------------------------------------------------------
+// Women's page: visibility, title, subtitle, cover image
+// ---------------------------------------------------------------------------
+const WomenPage = z
+  .object({
+    enabled: z.boolean(),
+    title: I18nSchema,
+    subtitle: OptionalI18nSchema,
+    heroUrl: z.union([z.string().min(1).max(1000).refine((v) => !v.startsWith("data:"), "Inline images are not allowed; upload the file"), z.null()]),
+  })
+  .superRefine((o, ctx) => {
+    if (needsArabic(o.subtitle)) ctx.addIssue({ code: "custom", path: ["subtitle", "ar"], message: "Arabic text is required when another language is filled" });
+  })
+  .openapi("AdminWomenPage");
+
+adminHomeRoutes.openapi(
+  createRoute({ method: "get", path: "/admin/women-page", tags: ["Admin"], security, summary: "The Women's page texts, cover image and visibility", responses: { 200: json(WomenPage, "OK"), ...errors } }),
+  async (c) => {
+    const v = ((await getSetting(c.get("db"), "women_page")) ?? {}) as { enabled?: boolean; title?: unknown; subtitle?: unknown; hero_path?: string | null };
+    return c.json({ enabled: v.enabled ?? false, title: full(v.title), subtitle: full(v.subtitle), heroUrl: imageUrl(v.hero_path ?? null) }, 200);
+  },
+);
+adminHomeRoutes.openapi(
+  createRoute({ method: "put", path: "/admin/women-page", tags: ["Admin"], security, summary: "Save the Women's page (switch it off to hide the page and its menu link)", request: { body: body(WomenPage) }, responses: { 200: json(Ok, "Saved"), ...errors } }),
+  async (c) => {
+    const b = c.req.valid("json");
+    await upsertSetting(c.get("db"), "women_page", { enabled: b.enabled, title: compact(b.title), subtitle: compact(b.subtitle), hero_path: toStoredPath(b.heroUrl) });
+    return c.json({ ok: true as const }, 200);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Men's page: visibility, title, subtitle, cover image
+// ---------------------------------------------------------------------------
+const MenPage = z
+  .object({
+    enabled: z.boolean(),
+    title: I18nSchema,
+    subtitle: OptionalI18nSchema,
+    heroUrl: z.union([z.string().min(1).max(1000).refine((v) => !v.startsWith("data:"), "Inline images are not allowed; upload the file"), z.null()]),
+  })
+  .superRefine((o, ctx) => {
+    if (needsArabic(o.subtitle)) ctx.addIssue({ code: "custom", path: ["subtitle", "ar"], message: "Arabic text is required when another language is filled" });
+  })
+  .openapi("AdminMenPage");
+
+adminHomeRoutes.openapi(
+  createRoute({ method: "get", path: "/admin/men-page", tags: ["Admin"], security, summary: "The Men's page texts, cover image and visibility", responses: { 200: json(MenPage, "OK"), ...errors } }),
+  async (c) => {
+    const v = ((await getSetting(c.get("db"), "men_page")) ?? {}) as { enabled?: boolean; title?: unknown; subtitle?: unknown; hero_path?: string | null };
+    return c.json({ enabled: v.enabled ?? false, title: full(v.title), subtitle: full(v.subtitle), heroUrl: imageUrl(v.hero_path ?? null) }, 200);
+  },
+);
+adminHomeRoutes.openapi(
+  createRoute({ method: "put", path: "/admin/men-page", tags: ["Admin"], security, summary: "Save the Men's page (switch it off to hide the page and its menu link)", request: { body: body(MenPage) }, responses: { 200: json(Ok, "Saved"), ...errors } }),
+  async (c) => {
+    const b = c.req.valid("json");
+    await upsertSetting(c.get("db"), "men_page", { enabled: b.enabled, title: compact(b.title), subtitle: compact(b.subtitle), hero_path: toStoredPath(b.heroUrl) });
+    return c.json({ ok: true as const }, 200);
+  },
+);

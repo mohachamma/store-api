@@ -211,7 +211,11 @@ insert into public.discount_codes (code, kind, value, min_subtotal) values ('WEL
 
 -- Home category cards (sample; editable from the dashboard)
 insert into public.home_cards (title, subtitle, image_path, link_url, sort_order) values
-  ('{"ar":"رجال","fr":"Homme","en":"Men"}', '{"ar":"أحدث الموديلات","fr":"Les nouveautés","en":"New arrivals"}', '/placeholders/hoodie-black-1.svg', '/search?category=outerwear', 1),
-  ('{"ar":"نساء","fr":"Femme","en":"Women"}', '{"ar":"إطلالات أنيقة","fr":"Looks élégants","en":"Elegant looks"}', '/placeholders/coat-sand-1.svg', '/search?category=outerwear', 2),
+  ('{"ar":"رجال","fr":"Homme","en":"Men"}', '{"ar":"أحدث الموديلات","fr":"Les nouveautés","en":"New arrivals"}', '/placeholders/hoodie-black-1.svg', '/men', 1),
+  ('{"ar":"نساء","fr":"Femme","en":"Women"}', '{"ar":"إطلالات أنيقة","fr":"Looks élégants","en":"Elegant looks"}', '/placeholders/coat-sand-1.svg', '/women', 2),
   ('{"ar":"كاجوال","fr":"Casual","en":"Casual"}', '{"ar":"لكل يوم","fr":"Pour tous les jours","en":"For every day"}', '/placeholders/tee-cream-1.svg', '/search?category=tops', 3),
   ('{"ar":"الأكثر مبيعاً","fr":"Meilleures ventes","en":"Best seller"}', '{"ar":"اختيار زبائننا","fr":"Le choix de nos clients","en":"Customer favorites"}', '/placeholders/jacket-denim-1.svg', '/sale', 4);
+
+-- Sample audiences (editable per product in the dashboard)
+update public.products set audience = 'women' where slug in ('hooded-deck-coat', 'oxford-shirt-white', 'heavy-tee-cream', 'chelsea-boot', 'slim-denim-jean');
+update public.products set audience = 'men' where slug in ('nylon-zip-hoodie', 'utility-jacket', 'black-skate-mid', 'red-skate-mid');
