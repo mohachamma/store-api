@@ -14,12 +14,14 @@ import type { AppEnv, ImageStorage } from "./lib/types.js";
 import { adminCatalogRoutes } from "./routes/admin-catalog.js";
 import { adminDeliveryRoutes } from "./routes/admin-delivery.js";
 import { adminHomeRoutes } from "./routes/admin-home.js";
+import { adminPagesRoutes } from "./routes/admin-pages.js";
 import { adminOrderRoutes } from "./routes/admin-orders.js";
 import { adminStoreRoutes } from "./routes/admin-store.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { cronRoutes } from "./routes/cron.js";
+import { pagesRoutes } from "./routes/pages.js";
 import { paymentRoutes } from "./routes/payments.js";
 import { healthRoutes } from "./routes/health.js";
 import { meRoutes } from "./routes/me.js";
@@ -31,7 +33,7 @@ export const OPENAPI_INFO = {
   openapi: "3.1.0",
   info: {
     title: "Store API",
-    version: "0.9.0",
+    version: "0.10.0",
     description: "API for the store storefront (store-web) and admin dashboard (store-admin).",
   },
 } as const;
@@ -81,6 +83,7 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Re
   app.route("/", orderRoutes);
   app.route("/", paymentRoutes);
   app.route("/", newsletterRoutes);
+  app.route("/", pagesRoutes);
   app.route("/", cronRoutes);
   // Signed-in customers only.
   app.use("/me", requireUser);
@@ -94,6 +97,7 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Re
   app.route("/", adminStoreRoutes);
   app.route("/", adminDeliveryRoutes);
   app.route("/", adminHomeRoutes);
+  app.route("/", adminPagesRoutes);
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", { type: "http", scheme: "bearer", bearerFormat: "JWT" });
 
   app.doc31("/openapi.json", OPENAPI_INFO);
