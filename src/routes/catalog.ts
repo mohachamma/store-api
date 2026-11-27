@@ -194,6 +194,22 @@ catalogRoutes.openapi(
   },
 );
 
+catalogRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/catalog/collections",
+    tags: ["Catalog"],
+    summary: "Published collections in display order (for menus)",
+    request: { query: Q },
+    responses: { 200: json(z.array(z.object({ slug: z.string(), title: z.string() })).openapi("CollectionLinks"), "OK") },
+  }),
+  async (c) => {
+    const { locale } = c.req.valid("query");
+    const rows = await c.get("db").query<{ slug: string; title: unknown }>(`select slug, title from public.collections where is_published order by sort_order, created_at, id`);
+    return c.json(rows.map((r) => ({ slug: r.slug, title: pick(r.title, locale) })), 200);
+  },
+);
+
 // ---------------------------------------------------------------------------
 // GET /catalog/collections/{slug}
 // ---------------------------------------------------------------------------
