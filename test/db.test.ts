@@ -248,7 +248,7 @@ describe("catalog constraints", () => {
   });
   it("seeds a coherent sample catalog", async () => {
     expect(await count("select count(*) n from products")).toBe(16);
-    expect(await count("select count(*) n from product_images")).toBe(48);
+    expect(await count("select count(*) n from product_images")).toBe(50);
     expect(await count("select count(*) n from looks")).toBe(4);
     expect(await count("select count(*) n from look_products")).toBe(8);
     expect(await count("select count(*) n from collection_products")).toBe(16);

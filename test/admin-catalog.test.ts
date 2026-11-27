@@ -84,7 +84,7 @@ describe("products", () => {
     expect(r.body).toMatchObject({ isPublished: false, isNew: true, name: { ar: "قميص تجريبي", fr: "Chemise test", en: "Test Shirt" } });
     expect(r.body.variants.map((v: any) => v.size)).toEqual(["S", "M", "XL"]);
     expect(r.body.variants[0].sku).toBe("TEE-S"); // upper-cased
-    expect(r.body.images).toEqual([{ url: "/placeholders/shirt-white-1.svg" }]);
+    expect(r.body.images).toEqual([{ url: "/placeholders/shirt-white-1.svg", color: null }]);
     expect((await app.request(`/catalog/products/${slug}`)).status).toBe(404);
     expect((await pub("/catalog/products?limit=100")).map((p: any) => p.slug)).not.toContain(slug);
   });

@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { getBrands, getBrandsStrip, getCategoryCards, getLooks, getNewsletter, getOffers, getWhyUs, getSale, getSetting, groupRows, SIZE_RANK, SUMMARY_SQL, toSummary, type SummaryRow } from "../lib/catalog.js";
+import { swatchHex } from "../lib/colors.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery, pick, pickOrNull } from "../lib/i18n.js";
 import { imageUrl } from "../lib/media.js";
@@ -25,6 +26,8 @@ export const ProductSummarySchema = z
     image: ImageSchema,
     category: CategorySchema,
     isNew: z.boolean(),
+    /** One entry per color of the product, for the small round swatches (hex null = unknown, show a neutral dot). */
+    colors: z.array(z.object({ name: z.string(), hex: z.string().nullable() })),
   })
   .openapi("ProductSummary");
 
@@ -33,6 +36,7 @@ const VariantSchema = z
     id: z.string().uuid(),
     size: z.string(),
     color: z.string(),
+    colorHex: z.string().nullable(),
     stock: z.number().int(),
     price: z.number().int(),
     compareAtPrice: z.number().int().nullable(),
@@ -41,7 +45,8 @@ const VariantSchema = z
 
 const ProductSchema = ProductSummarySchema.extend({
   description: z.string(),
-  images: z.array(ImageSchema),
+  /** `color` links a photo to a color name: tapping that color shows its photos (null = shown for every color). */
+  images: z.array(ImageSchema.extend({ color: z.string().nullable() })),
   sizes: z.array(z.string()),
   variants: z.array(VariantSchema),
 }).openapi("Product");
@@ -319,6 +324,8 @@ const FiltersSchema = z
     /** Sizes in stock for the products matching the other filters, in garment order. */
     sizes: z.array(z.string()),
     colors: z.array(z.string()),
+    /** The same colors with their swatch hex (for round dots in the filter panel). */
+    colorSwatches: z.array(z.object({ name: z.string(), hex: z.string().nullable() })),
     /** Cheapest-variant price range of the products matching the other filters; null when nothing matches. */
     priceRange: z.union([z.object({ min: z.number().int(), max: z.number().int() }), z.null()]),
   })
@@ -351,7 +358,7 @@ catalogRoutes.openapi(
           order by coalesce(array_position(array['XXS','XS','S','M','L','XL','XXL','XXXL'], size), 100), size`,
         forSizes.params,
       ),
-      db.query<{ color: string }>(`select distinct v.color ${base} join public.product_variants v on v.product_id = p.id and v.stock > 0 where ${forColors.where} order by v.color`, forColors.params),
+      db.query<{ color: string; color_hex: string | null }>(`select distinct on (lower(v.color)) v.color, v.color_hex ${base} join public.product_variants v on v.product_id = p.id and v.stock > 0 where ${forColors.where} order by lower(v.color), v.id`, forColors.params),
       db.query<{ lo: number | null; hi: number | null }>(`select min(mv.price) as lo, max(mv.price) as hi ${base} where ${forPrice.where}`, forPrice.params),
     ]);
     const lo = price[0]?.lo;
@@ -361,6 +368,7 @@ catalogRoutes.openapi(
         categories: categories.map((r) => ({ slug: r.slug, name: pick(r.name, q.locale), count: Number(r.n) })),
         sizes: sizes.map((r) => r.size),
         colors: colors.map((r) => r.color),
+        colorSwatches: colors.map((r) => ({ name: r.color, hex: swatchHex(r.color, r.color_hex) })),
         priceRange: lo === null || lo === undefined ? null : { min: Number(lo), max: Number(price[0]!.hi) },
       },
       200,
@@ -387,24 +395,25 @@ catalogRoutes.openapi(
     const row = (await db.query<SummaryRow & { description: unknown }>(`${SUMMARY_SQL.replace("select p.id,", "select p.description, p.id,")} where p.slug = $1 and p.is_published`, [slug]))[0];
     if (!row) throw new ApiError(404, "not_found", "Product not found");
     const [images, variants] = await Promise.all([
-      db.query<{ path: string; alt: unknown }>(`select path, alt from public.product_images where product_id = $1 order by sort_order, id`, [row.id]),
-      db.query<{ id: string; size: string; color: string; stock: number; price: number; compare_at_price: number | null }>(
-        `select v.id, v.size, v.color, v.stock, v.price, v.compare_at_price from public.product_variants v where v.product_id = $1 order by ${SIZE_RANK}, v.color`,
+      db.query<{ path: string; alt: unknown; color: string | null }>(`select path, alt, color from public.product_images where product_id = $1 order by sort_order, id`, [row.id]),
+      db.query<{ id: string; size: string; color: string; color_hex: string | null; stock: number; price: number; compare_at_price: number | null }>(
+        `select v.id, v.size, v.color, v.color_hex, v.stock, v.price, v.compare_at_price from public.product_variants v where v.product_id = $1 order by ${SIZE_RANK}, v.color`,
         [row.id],
       ),
     ]);
     const summary = toSummary(row, locale);
-    const imgs = images.map((i) => ({ url: imageUrl(i.path) ?? "", alt: pickOrNull(i.alt, locale) ?? summary.name }));
+    const imgs = images.map((i) => ({ url: imageUrl(i.path) ?? "", alt: pickOrNull(i.alt, locale) ?? summary.name, color: i.color }));
     return c.json(
       {
         ...summary,
         description: pick(row.description, locale),
-        images: imgs.length ? imgs : [summary.image],
+        images: imgs.length ? imgs : [{ ...summary.image, color: null }],
         sizes: [...new Set(variants.map((v) => v.size))],
         variants: variants.map((v) => ({
           id: v.id,
           size: v.size,
           color: v.color,
+          colorHex: swatchHex(v.color, v.color_hex),
           stock: Number(v.stock),
           price: Number(v.price),
           compareAtPrice: v.compare_at_price && Number(v.compare_at_price) > Number(v.price) ? Number(v.compare_at_price) : null,

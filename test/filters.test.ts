@@ -60,7 +60,7 @@ describe("filter options", () => {
 
   it("an empty result has no price range and no options, not an error", async () => {
     const r = (await get("/catalog/filters?q=zzzz-nothing")).body;
-    expect(r).toEqual({ total: 0, categories: [], sizes: [], colors: [], priceRange: null });
+    expect(r).toEqual({ total: 0, categories: [], sizes: [], colors: [], colorSwatches: [], priceRange: null });
   });
 
   it("out-of-stock sizes are not offered", async () => {

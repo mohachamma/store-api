@@ -219,3 +219,12 @@ insert into public.home_cards (title, subtitle, image_path, link_url, sort_order
 -- Sample audiences (editable per product in the dashboard)
 update public.products set audience = 'women' where slug in ('hooded-deck-coat', 'oxford-shirt-white', 'heavy-tee-cream', 'chelsea-boot', 'slim-denim-jean');
 update public.products set audience = 'men' where slug in ('nylon-zip-hoodie', 'utility-jacket', 'black-skate-mid', 'red-skate-mid');
+
+-- Demo of color swatches and per-color photos: the cream tee is also sold in black (photos tagged by color).
+update public.product_images set color = 'cream' where product_id = (select id from public.products where slug = 'heavy-tee-cream');
+insert into public.product_images (product_id, path, alt, sort_order, color)
+select p.id, '/placeholders/tee-black-' || n || '.svg', '{"ar":"تيشرت سميك أسود","fr":"T-shirt épais noir","en":"Heavy Tee Black"}'::jsonb, 2 + n, 'black'
+  from public.products p, generate_series(1, 2) n where p.slug = 'heavy-tee-cream';
+insert into public.product_variants (product_id, sku, size, color, stock, price)
+select p.id, 'HEAVY-TEE-CREAM-BLK-' || s, s, 'black', 6, 2400 from public.products p, unnest(array['M', 'L']) s where p.slug = 'heavy-tee-cream';
+
