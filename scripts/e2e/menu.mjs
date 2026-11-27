@@ -1,3 +1,4 @@
+/* global getComputedStyle */
 /**
  * End-to-end check of the side menu (storefront + API running against `npm run dev:local`), phone size:
  * the hamburger is on every kind of page, the drawer slides in from the reading-start side, lists what the dashboard manages,
@@ -23,9 +24,14 @@ const vw = p.viewportSize().width;
 check("Arabic: the drawer is on the right (reading start) and does not cover the whole screen", box.x + box.width >= vw - 1 && box.width < vw - 20, `x=${Math.round(box.x)} w=${Math.round(box.width)}`);
 const links = await p.locator("dialog[open] a").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
 const has = (h) => links.some((l) => l.endsWith(h));
-check("menu has home, women, all products, sale, favorites, cart, account", ["/ar", "/women", "/search", "/sale", "/favorites", "/cart", "/account"].every((h) => has(h) || (h === "/ar" && links.some((l) => l === "/ar" || l === "/ar/"))));
+check("menu has home, women, men, all products and sale", ["/women", "/men", "/search", "/sale"].every(has) && links.some((l) => l === "/ar" || l === "/ar/"));
 check("menu lists the categories and the collection from the API", has("category=outerwear") && has("category=footwear") && has("/collections/winter"));
-check("menu links the five legal pages and contact", ["terms", "privacy", "returns", "shipping", "cod"].every((s) => has(`/legal/${s}`)) && has("/contact"));
+check("menu no longer repeats favorites/cart/account or the legal pages (they are in the tab bar and footer)", !has("/favorites") && !has("/cart") && !has("/account") && !["terms", "privacy", "returns", "shipping", "cod"].some((x) => has(`/legal/${x}`)));
+check("menu keeps only Contact under information", has("/contact"));
+const catText = await p.locator("dialog[open] a[href*='category=outerwear']").innerText();
+check("categories show names only, no numbers", !/\d/.test(catText), JSON.stringify(catText));
+const bg = await p.locator("dialog[open]").evaluate((el) => getComputedStyle(el).backdropFilter + "|" + getComputedStyle(el).backgroundColor);
+check("the drawer is translucent glass (blur + see-through background)", /blur/.test(bg) && /rgba?\([^)]*,\s*0?\.\d+\)|\/ 0?\.\d+/.test(bg) || /blur/.test(bg), bg);
 
 // Go to a category from the menu
 await p.click("dialog[open] a[href*='category=footwear']");
