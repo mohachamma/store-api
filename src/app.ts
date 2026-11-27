@@ -33,7 +33,7 @@ export const OPENAPI_INFO = {
   openapi: "3.1.0",
   info: {
     title: "Store API",
-    version: "0.12.0",
+    version: "0.13.0",
     description: "API for the store storefront (store-web) and admin dashboard (store-admin).",
   },
 } as const;

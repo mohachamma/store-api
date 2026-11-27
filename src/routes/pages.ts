@@ -106,3 +106,22 @@ pagesRoutes.openapi(
     return c.json({ enabled: v.enabled !== false, title, subtitle: pickOrNull(v.subtitle, locale), heroImage: v.hero_path ? { url: imageUrl(v.hero_path) ?? "", alt: title } : null }, 200);
   },
 );
+
+const MenPageSchema = z
+  .object({
+    enabled: z.boolean(),
+    title: z.string(),
+    subtitle: z.string().nullable(),
+    heroImage: z.union([z.object({ url: z.string(), alt: z.string() }), z.null()]),
+  })
+  .openapi("MenPage");
+
+pagesRoutes.openapi(
+  createRoute({ method: "get", path: "/catalog/men", tags: ["Pages"], summary: "Texts and cover image of the Men's page (its products come from GET /catalog/products?audience=men)", request: { query: Q }, responses: { 200: json(MenPageSchema, "OK") } }),
+  async (c) => {
+    const { locale } = c.req.valid("query");
+    const v = ((await getSetting(c.get("db"), "men_page")) ?? {}) as { enabled?: boolean; title?: unknown; subtitle?: unknown; hero_path?: string | null };
+    const title = pick(v.title, locale) || "Men";
+    return c.json({ enabled: v.enabled !== false, title, subtitle: pickOrNull(v.subtitle, locale), heroImage: v.hero_path ? { url: imageUrl(v.hero_path) ?? "", alt: title } : null }, 200);
+  },
+);

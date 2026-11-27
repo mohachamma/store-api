@@ -104,3 +104,28 @@ describe("choosing who a product is for (dashboard)", () => {
     expect((await api("POST", "/admin/products/audience", { ids, audience: "men" })).status).toBe(401);
   });
 });
+
+describe("men's page (same as women's)", () => {
+  it("has default texts and shows men's and unisex products only", async () => {
+    expect((await api("GET", "/catalog/men?locale=fr")).body).toEqual({ enabled: true, title: "Homme", subtitle: "Les dernières nouveautés pour lui", heroImage: null });
+    expect((await api("GET", "/catalog/men?locale=ar")).body.title).toBe("رجال");
+    const men = (await api("GET", "/catalog/products?audience=men&limit=100")).body;
+    expect(slugs(men)).toContain("black-skate-mid");
+    expect(slugs(men)).not.toContain("chelsea-boot");
+  });
+  it("is edited from the dashboard (texts, cover, hiding) and is protected", async () => {
+    const put = await admin("PUT", "/admin/men-page", { enabled: true, title: { ar: "للرجال", fr: "", en: "For him" }, subtitle: { ar: "", fr: "", en: "" }, heroUrl: "https://img.example.com/uploads/men.webp" });
+    expect(put.status).toBe(200);
+    expect((await api("GET", "/catalog/men?locale=en")).body).toEqual({ enabled: true, title: "For him", subtitle: null, heroImage: { url: "https://img.example.com/uploads/men.webp", alt: "For him" } });
+    expect((await admin("GET", "/admin/men-page")).body).toMatchObject({ enabled: true, heroUrl: "https://img.example.com/uploads/men.webp" });
+    await admin("PUT", "/admin/men-page", { enabled: false, title: { ar: "للرجال", fr: "", en: "" }, subtitle: { ar: "", fr: "", en: "" }, heroUrl: null });
+    expect((await api("GET", "/catalog/men")).body.enabled).toBe(false);
+    expect((await api("PUT", "/admin/men-page", { enabled: true, title: { ar: "x", fr: "", en: "" }, subtitle: { ar: "", fr: "", en: "" }, heroUrl: null })).status).toBe(401);
+    expect((await admin("PUT", "/admin/men-page", { enabled: true, title: { ar: "x", fr: "", en: "" }, subtitle: { ar: "", fr: "sous", en: "" }, heroUrl: null })).status).toBe(422);
+  });
+  it("women's and men's settings are independent", async () => {
+    await admin("PUT", "/admin/women-page", { enabled: true, title: { ar: "نساء", fr: "", en: "" }, subtitle: { ar: "", fr: "", en: "" }, heroUrl: null });
+    expect((await api("GET", "/catalog/women")).body.enabled).toBe(true);
+    expect((await api("GET", "/catalog/men")).body.enabled).toBe(false);
+  });
+});
