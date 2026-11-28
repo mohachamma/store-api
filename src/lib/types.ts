@@ -1,3 +1,4 @@
+import type { AdminDirectory } from "./admins.js";
 import type { Db } from "./db.js";
 import type { DeliveryProvider } from "./delivery/types.js";
 import type { PaymentProvider } from "./payments/types.js";
@@ -8,4 +9,4 @@ export interface ImageStorage {
 }
 
 /** Hono context shared by all routes. */
-export type AppEnv = { Variables: { db: Db; storage: ImageStorage; delivery: Record<string, DeliveryProvider>; payment: PaymentProvider; adminId?: string; userId?: string; userEmail?: string } };
+export type AppEnv = { Variables: { db: Db; storage: ImageStorage; delivery: Record<string, DeliveryProvider>; payment: PaymentProvider; admins: AdminDirectory; adminId?: string; userId?: string; userEmail?: string } };

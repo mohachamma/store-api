@@ -46,7 +46,8 @@ const bearer = (header: string | undefined) => ((header ?? "").toLowerCase().sta
 /** Creates the customer's profile row the first time we see them (the account itself lives in Supabase Auth). */
 export async function ensureCustomer(q: Query, claims: AdminClaims): Promise<void> {
   const name = typeof claims.user_metadata?.full_name === "string" ? claims.user_metadata.full_name.trim().slice(0, 80) || null : null;
-  await q.query(`insert into public.customers (id, full_name) values ($1, $2) on conflict (id) do nothing`, [claims.sub, name]);
+  const email = typeof claims.email === "string" ? claims.email.trim().toLowerCase().slice(0, 200) || null : null;
+  await q.query(`insert into public.customers (id, full_name, email) values ($1, $2, $3) on conflict (id) do update set email = coalesce(public.customers.email, excluded.email)`, [claims.sub, name, email]);
 }
 
 /** Everything under /me/* goes through this: any signed-in user (customers; admins may test their own profile too). */

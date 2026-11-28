@@ -122,7 +122,19 @@ const fakePay = { ...realChargily, configured: () => true, async createCheckout(
 const { db, pg } = await createTestDb();
 pgRef.current = pg;
 await pg.query(`insert into auth.users (id) values ($1)`, [users["customer@store.test"]!.id]);
-const app = createApp({ db, delivery: { manual: manualProvider, yalidine: fakeYalidine }, payment: fakePay, storage: { upload: async (key, bytes, type) => void images.set(key, { bytes, type }) } });
+// Fake team directory over the demo users: an invited person gets the password "invited1234" (local only).
+const toAdmin = (email: string, u: { id: string }) => ({ id: u.id, email, createdAt: null, lastSignInAt: null });
+const fakeAdmins = {
+  async list() { return Object.entries(users).filter(([, u]) => u.role === "admin").map(([email, u]) => toAdmin(email, u)); },
+  async invite(email: string) {
+    const key = email.toLowerCase();
+    users[key] ??= { id: crypto.randomUUID(), password: "invited1234", role: "customer" };
+    users[key]!.role = "admin";
+    return toAdmin(key, users[key]!);
+  },
+  async demote(id: string) { for (const u of Object.values(users)) if (u.id === id) u.role = "customer"; },
+};
+const app = createApp({ admins: fakeAdmins, db, delivery: { manual: manualProvider, yalidine: fakeYalidine }, payment: fakePay, storage: { upload: async (key, bytes, type) => void images.set(key, { bytes, type }) } });
 
 serve({ fetch: app.fetch, port: API_PORT }, () => {
   console.info(`store-api (local, in-memory) on http://localhost:${API_PORT}  — fake auth/images on :${FAKE_PORT}`);
