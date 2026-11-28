@@ -20,7 +20,7 @@ export const adminStoreRoutes = new OpenAPIHono<AppEnv>();
 // ---------------------------------------------------------------------------
 // Shipping: fee per wilaya + free-delivery threshold
 // ---------------------------------------------------------------------------
-const AdminWilaya = z.object({ code: z.number().int(), nameAr: z.string(), nameFr: z.string(), homeFee: z.number().int(), deskFee: z.number().int(), active: z.boolean() }).openapi("AdminWilaya");
+const AdminWilaya = z.object({ code: z.number().int(), nameAr: z.string(), nameFr: z.string(), homeFee: z.number().int(), deskFee: z.number().int(), homeCost: z.number().int(), deskCost: z.number().int(), active: z.boolean() }).openapi("AdminWilaya");
 const AdminShipping = z.object({ freeShippingOver: z.number().int().nullable(), wilayas: z.array(AdminWilaya) }).openapi("AdminShipping");
 
 adminStoreRoutes.openapi(
@@ -28,18 +28,18 @@ adminStoreRoutes.openapi(
   async (c) => {
     const db = c.get("db");
     const [rows, rules] = await Promise.all([
-      db.query<{ code: number; name_ar: string; name_fr: string; home_fee: number; desk_fee: number; active: boolean }>(`select code, name_ar, name_fr, home_fee, desk_fee, active from public.wilayas order by code`),
+      db.query<{ code: number; name_ar: string; name_fr: string; home_fee: number; desk_fee: number; home_cost: number; desk_cost: number; active: boolean }>(`select code, name_ar, name_fr, home_fee, desk_fee, home_cost, desk_cost, active from public.wilayas order by code`),
       db.query<{ value: { free_shipping_over?: number | null } }>(`select value from public.site_settings where key = 'shipping_rules'`),
     ]);
     const v = rules[0]?.value?.free_shipping_over;
-    return c.json({ freeShippingOver: typeof v === "number" && v > 0 ? v : null, wilayas: rows.map((w) => ({ code: Number(w.code), nameAr: w.name_ar, nameFr: w.name_fr, homeFee: Number(w.home_fee), deskFee: Number(w.desk_fee), active: w.active })) }, 200);
+    return c.json({ freeShippingOver: typeof v === "number" && v > 0 ? v : null, wilayas: rows.map((w) => ({ code: Number(w.code), nameAr: w.name_ar, nameFr: w.name_fr, homeFee: Number(w.home_fee), deskFee: Number(w.desk_fee), homeCost: Number(w.home_cost), deskCost: Number(w.desk_cost), active: w.active })) }, 200);
   },
 );
 
 adminStoreRoutes.openapi(
   createRoute({
     method: "put", path: "/admin/shipping/wilayas", tags: ["Admin"], security, summary: "Change the delivery fees and availability of several wilayas at once (all or nothing)",
-    request: { body: body(z.object({ updates: z.array(z.object({ code: z.number().int().min(1).max(58), homeFee: z.number().int().min(0).max(MAX_FEE).optional(), deskFee: z.number().int().min(0).max(MAX_FEE).optional(), active: z.boolean().optional() })).min(1).max(58) })) },
+    request: { body: body(z.object({ updates: z.array(z.object({ code: z.number().int().min(1).max(58), homeFee: z.number().int().min(0).max(MAX_FEE).optional(), deskFee: z.number().int().min(0).max(MAX_FEE).optional(), homeCost: z.number().int().min(0).max(MAX_FEE).optional(), deskCost: z.number().int().min(0).max(MAX_FEE).optional(), active: z.boolean().optional() })).min(1).max(58) })) },
     responses: { 200: json(z.object({ updated: z.number().int() }), "OK"), ...errors },
   }),
   async (c) => {
@@ -52,6 +52,8 @@ adminStoreRoutes.openapi(
         const add = (v: unknown) => (params.push(v), `$${params.length}`);
         if (u.homeFee !== undefined) sets.push(`home_fee = ${add(u.homeFee)}`);
         if (u.deskFee !== undefined) sets.push(`desk_fee = ${add(u.deskFee)}`);
+        if (u.homeCost !== undefined) sets.push(`home_cost = ${add(u.homeCost)}`);
+        if (u.deskCost !== undefined) sets.push(`desk_cost = ${add(u.deskCost)}`);
         if (u.active !== undefined) sets.push(`active = ${add(u.active)}`);
         if (!sets.length) continue;
         if (!(await q.query(`update public.wilayas set ${sets.join(", ")} where code = $1 returning code`, params)).length) throw new ApiError(404, "not_found", `Wilaya ${u.code} does not exist`);

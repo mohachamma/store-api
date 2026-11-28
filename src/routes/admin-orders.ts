@@ -233,7 +233,7 @@ adminOrderRoutes.openapi(
     path: "/admin/orders/{id}/status",
     tags: ["Admin"],
     security,
-    summary: "Move an order forward: confirmed → shipped → delivered / returned, or cancel (restores the stock)",
+    summary: "Move an order forward: confirmed → shipped → delivered / returned (the goods go back to stock unless the profit settings say returned goods are lost), or cancel (restores the stock)",
     request: { params: IdParam, query: LocaleOnly, body: body(z.object({ status: z.enum(["shipped", "delivered", "returned", "cancelled"]) })) },
     responses: { 200: json(OrderDetail, "Updated"), ...errors },
   }),
@@ -253,10 +253,19 @@ adminOrderRoutes.openapi(
           `update public.orders set status = $2::public.order_status,
                   payment_status = case when $2 = 'delivered' and payment_method = 'cod' then 'paid'::public.payment_status
                                         when $2 = 'returned' and payment_status = 'paid' then 'refunded'::public.payment_status
-                                        else payment_status end
+                                        else payment_status end,
+                  delivered_at = case when $2 = 'delivered' then now() else delivered_at end,
+                  returned_at = case when $2 = 'returned' then now() else returned_at end
             where id = $1`,
           [id, status],
         );
+        // A returned parcel goes back on the shelf (unless the owner says returned goods cannot be resold).
+        if (status === "returned") {
+          const lost = (await q.query<{ lost: boolean }>(`select coalesce((value->>'returned_items_lost')::boolean, false) as lost from public.site_settings where key = 'profit'`))[0]?.lost === true;
+          if (!lost) {
+            await q.query(`update public.product_variants v set stock = v.stock + i.quantity from public.order_items i where i.order_id = $1 and i.variant_id = v.id`, [id]);
+          }
+        }
       }
     });
     return c.json(await loadDetail(c, id, c.req.valid("query").locale), 200);
@@ -273,7 +282,7 @@ const Overview = z
     revenueLast7Days: z.array(z.number().int()),
     ordersByStatus: z.object({ pending: z.number().int(), confirmed: z.number().int(), shipped: z.number().int(), delivered: z.number().int(), cancelled: z.number().int(), returned: z.number().int() }),
     topProducts: z.array(z.object({ id: z.string(), name: z.string(), image: z.string(), unitsSold: z.number().int(), revenue: z.number().int() })),
-    lowStock: z.array(z.object({ variantId: z.string(), productName: z.string(), size: z.string(), stock: z.number().int(), image: z.string() })),
+    lowStock: z.array(z.object({ variantId: z.string(), productName: z.string(), size: z.string(), color: z.string(), stock: z.number().int(), image: z.string() })),
   })
   .openapi("AdminOverview");
 
@@ -308,8 +317,8 @@ adminOrderRoutes.openapi(
            left join lateral (select path from public.product_images where product_id = p.id order by sort_order, id limit 1) img on true
           group by p.id, p.name, img.path order by units desc, revenue desc limit 5`,
       ),
-      db.query<{ id: string; name: unknown; size: string; stock: number; image_path: string | null }>(
-        `select v.id, p.name, v.size, v.stock, img.path as image_path
+      db.query<{ id: string; name: unknown; size: string; color: string; stock: number; image_path: string | null }>(
+        `select v.id, p.name, v.size, v.color, v.stock, img.path as image_path
            from public.product_variants v join public.products p on p.id = v.product_id and p.is_published
            left join lateral (select path from public.product_images where product_id = p.id order by sort_order, id limit 1) img on true
           where v.stock <= 3 order by v.stock, p.name->>'ar' limit 8`,
@@ -325,7 +334,7 @@ adminOrderRoutes.openapi(
         revenueLast7Days: daily.map((d) => Number(d.total)),
         ordersByStatus: Object.fromEntries(statuses.map((s) => [s, counts[s] ?? 0])) as Record<(typeof statuses)[number], number>,
         topProducts: top.map((p) => ({ id: p.id, name: pick(p.name, locale), image: imageUrl(p.image_path) ?? "", unitsSold: Number(p.units), revenue: Number(p.revenue) })),
-        lowStock: low.map((v) => ({ variantId: v.id, productName: pick(v.name, locale), size: v.size, stock: Number(v.stock), image: imageUrl(v.image_path) ?? "" })),
+        lowStock: low.map((v) => ({ variantId: v.id, productName: pick(v.name, locale), size: v.size, color: v.color, stock: Number(v.stock), image: imageUrl(v.image_path) ?? "" })),
       },
       200,
     );

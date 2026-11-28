@@ -16,6 +16,7 @@ import { adminDeliveryRoutes } from "./routes/admin-delivery.js";
 import { adminHomeRoutes } from "./routes/admin-home.js";
 import { adminPagesRoutes } from "./routes/admin-pages.js";
 import { adminOrderRoutes } from "./routes/admin-orders.js";
+import { adminProfitRoutes } from "./routes/admin-profit.js";
 import { adminStoreRoutes } from "./routes/admin-store.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
@@ -33,7 +34,7 @@ export const OPENAPI_INFO = {
   openapi: "3.1.0",
   info: {
     title: "Store API",
-    version: "0.15.0",
+    version: "0.17.0",
     description: "API for the store storefront (store-web) and admin dashboard (store-admin).",
   },
 } as const;
@@ -95,6 +96,7 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Re
   app.route("/", adminOrderRoutes);
   app.route("/", adminCatalogRoutes);
   app.route("/", adminStoreRoutes);
+  app.route("/", adminProfitRoutes);
   app.route("/", adminDeliveryRoutes);
   app.route("/", adminHomeRoutes);
   app.route("/", adminPagesRoutes);

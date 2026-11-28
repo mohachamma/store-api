@@ -163,6 +163,7 @@ const VariantInput = z
     stock: z.number().int().min(0).max(100000),
     price: z.number().int().min(1).max(10_000_000),
     compareAtPrice: z.number().int().min(1).max(10_000_000).nullable().default(null),
+    costPrice: z.number().int().min(0).max(10_000_000).nullable().default(null),
   })
   .refine((v) => v.compareAtPrice === null || v.compareAtPrice > v.price, { message: "The compare-at price must be higher than the price", path: ["compareAtPrice"] })
   .openapi("VariantInput");
@@ -207,7 +208,7 @@ const ProductDetail = z
     isNew: z.boolean(),
     audience: z.enum(["women", "men", "unisex"]),
     images: z.array(z.object({ url: z.string(), color: z.string().nullable() })),
-    variants: z.array(z.object({ id: z.string().uuid(), size: z.string(), color: z.string(), colorHex: z.string().nullable(), sku: z.string().nullable(), stock: z.number().int(), price: z.number().int(), compareAtPrice: z.number().int().nullable() })),
+    variants: z.array(z.object({ id: z.string().uuid(), size: z.string(), color: z.string(), colorHex: z.string().nullable(), sku: z.string().nullable(), stock: z.number().int(), price: z.number().int(), compareAtPrice: z.number().int().nullable(), costPrice: z.number().int().nullable() })),
   })
   .openapi("AdminProduct");
 
@@ -225,6 +226,8 @@ const ProductRow = z
     compareAtPrice: z.number().int().nullable(),
     totalStock: z.number().int(),
     variantCount: z.number().int(),
+    /** Color + size combinations with no stock left (at most 30), so the owner sees at a glance what a customer can no longer order. */
+    soldOut: z.array(z.object({ color: z.string(), size: z.string() })),
     image: z.string().nullable(),
   })
   .openapi("AdminProductRow");
@@ -235,14 +238,14 @@ async function loadProduct(q: import("../lib/db.js").Query, id: string) {
   if (!p) throw new ApiError(404, "not_found", "Product not found");
   const [images, variants] = await Promise.all([
     q.query<{ path: string; color: string | null }>(`select path, color from public.product_images where product_id = $1 order by sort_order, id`, [id]),
-    q.query<{ id: string; size: string; color: string; color_hex: string | null; sku: string | null; stock: number; price: number; compare_at_price: number | null }>(
-      `select v.id, v.size, v.color, v.color_hex, v.sku, v.stock, v.price, v.compare_at_price from public.product_variants v where v.product_id = $1
+    q.query<{ id: string; size: string; color: string; color_hex: string | null; sku: string | null; stock: number; price: number; compare_at_price: number | null; cost_price: number | null }>(
+      `select v.id, v.size, v.color, v.color_hex, v.sku, v.stock, v.price, v.compare_at_price, v.cost_price from public.product_variants v where v.product_id = $1
         order by coalesce(array_position(array['XXS','XS','S','M','L','XL','XXL','XXXL'], v.size), 100), v.size, v.color`, [id]),
   ]);
   return {
     id: p.id, slug: p.slug, name: full(p.name), description: full(p.description), categoryId: p.category_id, brandId: p.brand_id, isPublished: p.is_published, isNew: p.is_new, audience: p.audience,
     images: images.map((i) => ({ url: imageUrl(i.path) ?? "", color: i.color })),
-    variants: variants.map((v) => ({ id: v.id, size: v.size, color: v.color, colorHex: v.color_hex, sku: v.sku, stock: Number(v.stock), price: Number(v.price), compareAtPrice: v.compare_at_price ? Number(v.compare_at_price) : null })),
+    variants: variants.map((v) => ({ id: v.id, size: v.size, color: v.color, colorHex: v.color_hex, sku: v.sku, stock: Number(v.stock), price: Number(v.price), compareAtPrice: v.compare_at_price ? Number(v.compare_at_price) : null, costPrice: v.cost_price === null ? null : Number(v.cost_price) })),
   };
 }
 
@@ -278,9 +281,9 @@ async function saveProduct(db: import("../lib/db.js").Db, id: string | null, b: 
     for (const v of b.variants) {
       const sku = v.sku?.trim() ? v.sku.trim().toUpperCase() : null;
       if (v.id) {
-        await q.query(`update public.product_variants set size = $2, color = $3, sku = $4, stock = $5, price = $6, compare_at_price = $7, color_hex = $8 where id = $1`, [v.id, v.size, v.color, sku, v.stock, v.price, v.compareAtPrice, v.colorHex?.toLowerCase() ?? null]);
+        await q.query(`update public.product_variants set size = $2, color = $3, sku = $4, stock = $5, price = $6, compare_at_price = $7, color_hex = $8, cost_price = $9 where id = $1`, [v.id, v.size, v.color, sku, v.stock, v.price, v.compareAtPrice, v.colorHex?.toLowerCase() ?? null, v.costPrice]);
       } else {
-        await q.query(`insert into public.product_variants (product_id, size, color, sku, stock, price, compare_at_price, color_hex) values ($1, $2, $3, $4, $5, $6, $7, $8)`, [productId, v.size, v.color, sku, v.stock, v.price, v.compareAtPrice, v.colorHex?.toLowerCase() ?? null]);
+        await q.query(`insert into public.product_variants (product_id, size, color, sku, stock, price, compare_at_price, color_hex, cost_price) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [productId, v.size, v.color, sku, v.stock, v.price, v.compareAtPrice, v.colorHex?.toLowerCase() ?? null, v.costPrice]);
       }
     }
     return productId;
@@ -309,10 +312,11 @@ adminCatalogRoutes.openapi(
     const w = where.length ? `where ${where.join(" and ")}` : "";
     const db = c.get("db");
     const [rows, count] = await Promise.all([
-      db.query<{ id: string; slug: string; name: unknown; cat: unknown; is_published: boolean; is_new: boolean; audience: "women" | "men" | "unisex"; price: number | null; compare: number | null; stock: number; n: number; path: string | null }>(
+      db.query<{ id: string; slug: string; name: unknown; cat: unknown; is_published: boolean; is_new: boolean; audience: "women" | "men" | "unisex"; price: number | null; compare: number | null; stock: number; n: number; path: string | null; sold_out: { color: string; size: string }[] }>(
         `select p.id, p.slug, p.name, c.name as cat, p.is_published, p.is_new, p.audience, mv.price, mv.compare_at_price as compare,
                 (select coalesce(sum(v.stock), 0)::int from public.product_variants v where v.product_id = p.id) as stock,
                 (select count(*)::int from public.product_variants v where v.product_id = p.id) as n,
+                (select coalesce(jsonb_agg(jsonb_build_object('color', x.color, 'size', x.size)), '[]'::jsonb) from (select v.color, v.size from public.product_variants v where v.product_id = p.id and v.stock = 0 order by v.color, v.size limit 30) x) as sold_out,
                 (select i.path from public.product_images i where i.product_id = p.id order by i.sort_order, i.id limit 1) as path
            from public.products p join public.categories c on c.id = p.category_id
            left join lateral (select v.price, v.compare_at_price from public.product_variants v where v.product_id = p.id order by v.price, v.id limit 1) mv on true
@@ -320,7 +324,7 @@ adminCatalogRoutes.openapi(
       db.query<{ n: number }>(`select count(*)::int as n from public.products p ${w}`, params.slice(0, params.length - 2)),
     ]);
     return c.json({
-      items: rows.map((r) => ({ id: r.id, slug: r.slug, name: pick(r.name, f.locale as Locale), categoryName: pick(r.cat, f.locale as Locale), isPublished: r.is_published, isNew: r.is_new, audience: r.audience, price: r.price === null ? null : Number(r.price), compareAtPrice: r.compare ? Number(r.compare) : null, totalStock: Number(r.stock), variantCount: Number(r.n), image: imageUrl(r.path) })),
+      items: rows.map((r) => ({ id: r.id, slug: r.slug, name: pick(r.name, f.locale as Locale), categoryName: pick(r.cat, f.locale as Locale), isPublished: r.is_published, isNew: r.is_new, audience: r.audience, price: r.price === null ? null : Number(r.price), compareAtPrice: r.compare ? Number(r.compare) : null, totalStock: Number(r.stock), variantCount: Number(r.n), soldOut: r.sold_out ?? [], image: imageUrl(r.path) })),
       total: Number(count[0]?.n ?? 0),
     }, 200);
   },
@@ -380,7 +384,7 @@ adminCatalogRoutes.openapi(
 // Inventory: prices and stock for many variants at once
 // ---------------------------------------------------------------------------
 const VariantRow = z
-  .object({ variantId: z.string().uuid(), productId: z.string().uuid(), productName: z.string(), image: z.string().nullable(), size: z.string(), color: z.string(), stock: z.number().int(), price: z.number().int(), compareAtPrice: z.number().int().nullable() })
+  .object({ variantId: z.string().uuid(), productId: z.string().uuid(), productName: z.string(), image: z.string().nullable(), size: z.string(), color: z.string(), stock: z.number().int(), price: z.number().int(), compareAtPrice: z.number().int().nullable(), costPrice: z.number().int().nullable() })
   .openapi("AdminVariantRow");
 
 adminCatalogRoutes.openapi(
@@ -403,14 +407,14 @@ adminCatalogRoutes.openapi(
     const base = `from public.product_variants v join public.products p on p.id = v.product_id ${w}`;
     const db = c.get("db");
     const [rows, count] = await Promise.all([
-      db.query<{ id: string; pid: string; name: unknown; path: string | null; size: string; color: string; stock: number; price: number; compare: number | null }>(
+      db.query<{ id: string; pid: string; name: unknown; path: string | null; size: string; color: string; stock: number; price: number; compare: number | null; cost: number | null }>(
         `select v.id, p.id as pid, p.name, (select i.path from public.product_images i where i.product_id = p.id order by i.sort_order, i.id limit 1) as path,
-                v.size, v.color, v.stock, v.price, v.compare_at_price as compare
+                v.size, v.color, v.stock, v.price, v.compare_at_price as compare, v.cost_price as cost
            ${base} order by p.created_at desc, p.id, coalesce(array_position(array['XXS','XS','S','M','L','XL','XXL','XXXL'], v.size), 100), v.size limit ${add(f.limit)} offset ${add(f.offset)}`, params),
       db.query<{ n: number }>(`select count(*)::int as n ${base}`, params.slice(0, params.length - 2)),
     ]);
     return c.json({
-      items: rows.map((r) => ({ variantId: r.id, productId: r.pid, productName: pick(r.name, f.locale as Locale), image: imageUrl(r.path), size: r.size, color: r.color, stock: Number(r.stock), price: Number(r.price), compareAtPrice: r.compare ? Number(r.compare) : null })),
+      items: rows.map((r) => ({ variantId: r.id, productId: r.pid, productName: pick(r.name, f.locale as Locale), image: imageUrl(r.path), size: r.size, color: r.color, stock: Number(r.stock), price: Number(r.price), compareAtPrice: r.compare ? Number(r.compare) : null, costPrice: r.cost === null ? null : Number(r.cost) })),
       total: Number(count[0]?.n ?? 0),
     }, 200);
   },
@@ -420,7 +424,7 @@ adminCatalogRoutes.openapi(
   createRoute({
     method: "post", path: "/admin/variants/bulk", tags: ["Admin"], security,
     summary: "Change price, compare-at price and/or stock of many variants in one go (all or nothing)",
-    request: { body: body(z.object({ updates: z.array(z.object({ variantId: z.string().uuid(), price: z.number().int().min(1).max(10_000_000).optional(), compareAtPrice: z.number().int().min(1).max(10_000_000).nullable().optional(), stock: z.number().int().min(0).max(100000).optional() })).min(1).max(500) })) },
+    request: { body: body(z.object({ updates: z.array(z.object({ variantId: z.string().uuid(), price: z.number().int().min(1).max(10_000_000).optional(), compareAtPrice: z.number().int().min(1).max(10_000_000).nullable().optional(), stock: z.number().int().min(0).max(100000).optional(), costPrice: z.number().int().min(0).max(10_000_000).nullable().optional() })).min(1).max(500) })) },
     responses: { 200: json(z.object({ updated: z.number().int() }), "OK"), ...errors },
   }),
   async (c) => {
@@ -434,6 +438,7 @@ adminCatalogRoutes.openapi(
         if (u.price !== undefined) sets.push(`price = ${add(u.price)}`);
         if (u.compareAtPrice !== undefined) sets.push(`compare_at_price = ${add(u.compareAtPrice)}`);
         if (u.stock !== undefined) sets.push(`stock = ${add(u.stock)}`);
+        if (u.costPrice !== undefined) sets.push(`cost_price = ${add(u.costPrice)}`);
         if (!sets.length) continue;
         const r = await q.query(`update public.product_variants set ${sets.join(", ")} where id = $1 returning id`, params);
         if (!r.length) throw new ApiError(404, "not_found", "A variant does not exist");

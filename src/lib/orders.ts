@@ -156,10 +156,16 @@ export async function createOrder(db: Db, input: OrderInput & { customer: Custom
     )[0]!;
     for (const l of quote.lines) {
       await q.query(
-        `insert into public.order_items (order_id, variant_id, product_name, size, color, unit_price, quantity) values ($1, $2, $3, $4, $5, $6, $7)`,
+        `insert into public.order_items (order_id, variant_id, product_name, size, color, unit_price, quantity, unit_cost)
+         values ($1, $2, $3, $4, $5, $6, $7, (select cost_price from public.product_variants where id = $2))`,
         [order.id, l.variantId, l.name, l.size, l.color, l.unitPrice, l.quantity],
       );
     }
+    // What the delivery company will charge us for this parcel (kept even when the customer got free delivery).
+    await q.query(
+      `update public.orders set delivery_cost = (select case when $2 = 'desk' then desk_cost else home_cost end from public.wilayas where code = $3) where id = $1`,
+      [order.id, input.deliveryType, input.wilayaCode],
+    );
     return { orderNumber: Number(order.order_number), token: order.public_token, quote };
   });
 }
