@@ -7,16 +7,17 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch scripts/dev-server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js",
+    "start": "tsx scripts/dev-server.ts",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "openapi:dump": "tsx scripts/dump-openapi.ts",
     "db:gen-geo": "node scripts/gen-geo.mjs",
     "db:gen-seed": "node scripts/gen-seed.mjs",
-    "dev:local": "tsx scripts/dev-local.ts"
+    "dev:local": "tsx scripts/dev-local.ts",
+    "db:migrate": "tsx scripts/migrate.ts"
   },
   "dependencies": {
     "@chargily/chargily-pay": "^2.1.0",

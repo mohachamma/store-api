@@ -14,6 +14,7 @@ describe("app", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe("ok");
+    expect(body.databaseConnection).toBe("not_configured"); // no DATABASE_URL in tests
   });
 
   it("serves the OpenAPI document", async () => {

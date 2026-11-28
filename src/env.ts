@@ -22,6 +22,8 @@ const EnvSchema = z.object({
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   /** Postgres connection string (Supabase → Project Settings → Database → Connection pooling). Secret. */
   DATABASE_URL: z.string().min(1).optional(),
+  /** Only for `npm run db:migrate` (deploy time): the Session pooler string. Falls back to DATABASE_URL. Secret. */
+  MIGRATIONS_DATABASE_URL: z.string().min(1).optional(),
   /** Cloudflare R2 (images). Account id, S3-compatible API token, bucket and the public base URL of the bucket. */
   R2_ACCOUNT_ID: z.string().min(1).optional(),
   R2_ACCESS_KEY_ID: z.string().min(1).optional(),

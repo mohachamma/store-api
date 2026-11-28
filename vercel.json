@@ -1,3 +1,5 @@
 {
+  "regions": ["fra1"],
+  "buildCommand": "npm run build && npm run db:migrate",
   "crons": [{ "path": "/cron/cleanup", "schedule": "0 3 * * *" }]
 }
