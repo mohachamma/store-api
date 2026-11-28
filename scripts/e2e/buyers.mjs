@@ -30,7 +30,7 @@ const againId = await idOf(again.orderNumber);
 
 // 2) A loyal buyer
 for (let i = 0; i < 2; i++) await finish((await place("0661 70 00 02")).orderNumber, "delivered");
-const loyal = await place("0661 70 00 02");
+await place("0661 70 00 02"); // the loyal buyer's new (pending) order
 
 const browser = await chromium.launch();
 const admin = await (await browser.newContext({ viewport: { width: 1000, height: 900 } })).newPage();

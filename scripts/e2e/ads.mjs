@@ -50,7 +50,7 @@ check("the order page shows the ad", /facebook · eid_sale/.test(await admin.loc
 // 4) Ad spend + report + link builder
 await fetch(`${API}/admin/expenses`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ spentOn: new Date().toISOString().slice(0, 10), category: "ads", platform: "Facebook", campaign: "Eid_Sale", amount: 4000 }) });
 await admin.goto(`${ADMIN}/ads`, { waitUntil: "networkidle" });
-const page = (await admin.locator("main").innerText()).replace(/[\s  ]+/g, " ");
+const page = (await admin.locator("main").innerText()).replace(/[\s\u202f\u00a0]+/g, " ");
 check("the ads report lists the campaign with its spend", /facebook · eid_sale/.test(page) && /4 ?000/.test(page), page.slice(0, 0));
 await admin.click("button:has-text('Facebook')");
 await admin.fill("#lb-campaign", "Eid Sale 2");

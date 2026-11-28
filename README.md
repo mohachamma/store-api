@@ -25,3 +25,6 @@ npm run dev            # http://localhost:8787/health and /openapi.json
 
 ## Deploy
 Vercel detects the Hono app from `src/index.ts`. Set the variables from `.env.example` in the Vercel project.
+
+## Going live
+See [docs/DEPLOY.md](docs/DEPLOY.md) (Supabase, Vercel, first admin, secrets).

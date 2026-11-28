@@ -5,7 +5,7 @@ import type { Db, Query } from "../../src/lib/db.js";
 
 const root = join(import.meta.dirname, "..", "..", "supabase");
 
-const SUPABASE_STUBS = `
+export const SUPABASE_STUBS = `
   create role anon nologin;
   create role authenticated nologin;
   create role service_role nologin bypassrls;
