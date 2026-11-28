@@ -2,7 +2,10 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery } from "../lib/i18n.js";
 import { optionalUserId } from "../lib/auth.js";
+import { getSetting } from "../lib/catalog.js";
 import { computeQuote, createOrder } from "../lib/orders.js";
+import { syncTracking } from "../lib/tracking.js";
+import { loadMessages, render, waLink } from "../lib/whatsapp.js";
 import type { AppEnv } from "../lib/types.js";
 
 const json = <T extends z.ZodTypeAny>(schema: T, description: string) => ({ description, content: { "application/json": { schema } } });
@@ -72,6 +75,10 @@ const OrderView = z
     discountTotal: z.number().int(),
     total: z.number().int(),
     trackingNumber: z.string().nullable(),
+    /** The delivery company's own status text for the parcel (as it reports it), when known. */
+    deliveryStatus: z.string().nullable(),
+    /** WhatsApp link to the store with "I confirm my order #N" already typed (null when the store has no WhatsApp number). */
+    whatsappConfirmUrl: z.string().nullable(),
     createdAt: z.string(),
     items: z.array(z.object({ name: z.string(), size: z.string(), color: z.string(), unitPrice: z.number().int(), quantity: z.number().int(), lineTotal: z.number().int() })),
   })
@@ -116,7 +123,7 @@ orderRoutes.openapi(
     const pay = c.get("payment");
     if (b.paymentMethod === "chargily" && !pay.configured()) throw new ApiError(422, "payment_unavailable", "Card payment is not available right now");
     const customerId = await optionalUserId(c.req.header("authorization"), db);
-    const r = await createOrder(db, { customerId, items: b.items, wilayaCode: b.wilayaCode, deliveryType: b.deliveryType, discountCode: b.discountCode, customer: b.customer, paymentMethod: b.paymentMethod });
+    const r = await createOrder(db, { customerId, items: b.items, wilayaCode: b.wilayaCode, deliveryType: b.deliveryType, discountCode: b.discountCode, customer: b.customer, paymentMethod: b.paymentMethod, locale: b.locale });
     let checkoutUrl: string | null = null;
     if (b.paymentMethod === "chargily") {
       try {
@@ -150,10 +157,22 @@ orderRoutes.openapi(
     const { orderNumber } = c.req.valid("param");
     const { token, locale } = c.req.valid("query");
     const db = c.get("db");
+    // Keep the parcel status fresh without a visit to the company for every page view: ask at most every 30 minutes.
+    const stale = (
+      await db.query<{ id: string; status: string; delivery_company: string | null; tracking_number: string | null }>(
+        `select id, status, delivery_company, tracking_number from public.orders
+          where order_number = $1 and public_token = $2 and status in ('confirmed', 'shipped') and tracking_number is not null
+            and delivery_company is not null and delivery_company <> 'manual' and (tracking_checked_at is null or tracking_checked_at < now() - interval '30 minutes')`,
+        [orderNumber, token],
+      )
+    )[0];
+    if (stale) {
+      await Promise.race([syncTracking(db, c.get("delivery"), stale).catch(() => null), new Promise((r) => setTimeout(r, 4000))]);
+    }
     const o = (
-      await db.query<{ id: string; order_number: string; status: "pending"; payment_method: "cod"; payment_status: "unpaid"; delivery_type: "home"; name_ar: string; name_fr: string; subtotal: number; shipping_fee: number; discount_total: number; total: number; tracking_number: string | null; created_at: unknown }>(
+      await db.query<{ id: string; order_number: string; status: "pending"; payment_method: "cod"; payment_status: "unpaid"; delivery_type: "home"; name_ar: string; name_fr: string; subtotal: number; shipping_fee: number; discount_total: number; total: number; tracking_number: string | null; delivery_status: string | null; created_at: unknown }>(
         `select o.id, o.order_number, o.status, o.payment_method, o.payment_status, o.delivery_type, w.name_ar, w.name_fr,
-                o.subtotal, o.shipping_fee, o.discount_total, o.total, o.tracking_number, o.created_at
+                o.subtotal, o.shipping_fee, o.discount_total, o.total, o.tracking_number, o.delivery_status, o.created_at
            from public.orders o join public.wilayas w on w.code = o.wilaya_code
           where o.order_number = $1 and o.public_token = $2`,
         [orderNumber, token],
@@ -164,8 +183,12 @@ orderRoutes.openapi(
       `select product_name, size, color, unit_price, quantity, line_total from public.order_items where order_id = $1 order by id`,
       [o.id],
     );
+    const storeWa = ((await getSetting(db, "store_info")) as { whatsapp?: string } | null)?.whatsapp?.trim();
+    const confirmText = render((await loadMessages(db)).confirm[locale], { number: o.order_number });
     return c.json(
       {
+        whatsappConfirmUrl: storeWa && o.status === "pending" ? waLink(storeWa, confirmText) : null,
+        deliveryStatus: o.delivery_status,
         orderNumber: Number(o.order_number), status: o.status, paymentMethod: o.payment_method, paymentStatus: o.payment_status, deliveryType: o.delivery_type,
         wilaya: locale === "ar" ? o.name_ar : o.name_fr, subtotal: Number(o.subtotal), shippingFee: Number(o.shipping_fee), discountTotal: Number(o.discount_total), total: Number(o.total),
         trackingNumber: o.tracking_number, createdAt: new Date(o.created_at as string).toISOString(),

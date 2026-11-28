@@ -1,6 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { getEnv } from "../env.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
+import { syncTracking } from "../lib/tracking.js";
 import type { AppEnv } from "../lib/types.js";
 
 const Result = z.object({ expiredOrders: z.number().int(), deletedEvents: z.number().int(), trackingUpdated: z.number().int() }).openapi("CleanupResult");
@@ -22,17 +23,14 @@ cronRoutes.openapi(
     const expired = await db.query<{ n: number }>(`select public.expire_pending_orders(14) as n`);
     const events = await db.query<{ id: string }>(`delete from public.admin_events where created_at < now() - interval '60 days' returning id`);
     // Refresh the status of parcels still on the road (at most 100 per run, one company call each).
-    const open = await db.query<{ id: string; delivery_company: string; tracking_number: string }>(
-      `select id, delivery_company, tracking_number from public.orders where status in ('confirmed', 'shipped') and tracking_number is not null and delivery_company is not null and delivery_company <> 'manual' order by updated_at limit 100`,
+    const open = await db.query<{ id: string; status: string; delivery_company: string; tracking_number: string }>(
+      `select id, status, delivery_company, tracking_number from public.orders where status in ('confirmed', 'shipped') and tracking_number is not null and delivery_company is not null and delivery_company <> 'manual' order by updated_at limit 100`,
     );
     let updated = 0;
     for (const o of open) {
-      const p = c.get("delivery")[o.delivery_company];
-      if (!p || !p.configured()) continue;
       try {
-        const t = await p.getTracking(o.tracking_number);
-        await db.query(`update public.orders set delivery_status = $2 where id = $1`, [o.id, t.status]);
-        updated++;
+        // Saves the company's status and moves the order (shipped / delivered / returned) when the company says so.
+        if (await syncTracking(db, c.get("delivery"), o)) updated++;
       } catch {
         // One failing parcel must not stop the others.
       }

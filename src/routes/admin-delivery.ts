@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { getActiveProviderId } from "../lib/delivery/index.js";
+import { syncTracking } from "../lib/tracking.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -64,15 +65,14 @@ adminDeliveryRoutes.openapi(
   async (c) => {
     const { id } = c.req.valid("param");
     const db = c.get("db");
-    const o = (await db.query<{ delivery_company: string | null; tracking_number: string | null }>(`select delivery_company, tracking_number from public.orders where id = $1`, [id]))[0];
+    const o = (await db.query<{ id: string; status: string; delivery_company: string | null; tracking_number: string | null }>(`select id, status, delivery_company, tracking_number from public.orders where id = $1`, [id]))[0];
     if (!o) throw new ApiError(404, "not_found", "Order not found");
     const p = o.delivery_company ? c.get("delivery")[o.delivery_company] : undefined;
     if (!p || p.id === "manual" || !o.tracking_number) throw new ApiError(409, "conflict", "This order has no delivery company to ask");
     if (!p.configured()) throw new ApiError(409, "delivery_not_configured", `${p.name} keys are not set on the server yet`);
     try {
-      const t = await p.getTracking(o.tracking_number);
-      await db.query(`update public.orders set delivery_status = $2 where id = $1`, [id, t.status]);
-      return c.json({ deliveryStatus: t.status }, 200);
+      const t = await syncTracking(db, c.get("delivery"), o);
+      return c.json({ deliveryStatus: t?.deliveryStatus ?? "unknown" }, 200);
     } catch (e) {
       console.error("Tracking refresh failed:", (e as Error).name);
       throw new ApiError(502, "delivery_failed", `${p.name} did not answer. Try again later.`);
