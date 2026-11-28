@@ -171,3 +171,24 @@ describe("automatic tracking", () => {
     expect((await status(o.id)).status).toBe("shipped");
   });
 });
+
+describe("the delivery company's own tracking page", () => {
+  it("the owner saves the company's link once; customer and owner get it with the parcel code", async () => {
+    expect((await admin("PUT", "/admin/delivery", { trackingUrls: { fakeco: "http://insecure.example/{tracking}" } })).status).toBe(422); // https only
+    expect((await admin("PUT", "/admin/delivery", { trackingUrls: { fakeco: "https://fakeco.example/track" } })).status).toBe(422); // needs {tracking}
+    const saved = await admin("PUT", "/admin/delivery", { trackingUrls: { fakeco: "https://fakeco.example/track?code={tracking}" } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.provider).toBe("fakeco"); // saving the link does not change the company
+    expect(saved.body.trackingUrls.fakeco).toContain("{tracking}");
+
+    const o = await place();
+    expect((await admin("POST", `/admin/orders/${o.id}/confirm`, {})).status).toBe(200);
+    const view = (await api("GET", `/orders/${o.orderNumber}?token=${o.token}`)).body;
+    expect(view.carrierTrackingUrl).toBe(`https://fakeco.example/track?code=FAKE-${o.orderNumber}`);
+    expect((await admin("GET", `/admin/orders/${o.id}`)).body.carrierTrackingUrl).toBe(view.carrierTrackingUrl);
+
+    // A link can be removed again, and an order without a saved link has none.
+    expect((await admin("PUT", "/admin/delivery", { trackingUrls: { fakeco: "" } })).body.trackingUrls).toEqual({});
+    expect((await api("GET", `/orders/${o.orderNumber}?token=${o.token}`)).body.carrierTrackingUrl).toBeNull();
+  });
+});

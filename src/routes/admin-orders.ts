@@ -3,6 +3,7 @@ import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery, pick, type Locale } from "../lib/i18n.js";
 import { imageUrl } from "../lib/media.js";
 import { getActiveProviderId } from "../lib/delivery/index.js";
+import { carrierTrackingUrl } from "../lib/delivery/index.js";
 import { moveOrder } from "../lib/order-status.js";
 import { toWhatsappNumber } from "../lib/orders.js";
 import { loadMessages, orderPageUrl, render, waLink } from "../lib/whatsapp.js";
@@ -48,6 +49,8 @@ const OrderDetail = OrderRow.extend({
   discountCode: z.string().nullable(),
   deliveryCompany: z.string().nullable(),
   deliveryStatus: z.string().nullable(),
+  /** The delivery company's tracking page for this parcel (opens the parcel on its site), or null when no link is saved. */
+  carrierTrackingUrl: z.string().nullable(),
   confirmedAt: z.string().nullable(),
   items: z.array(z.object({ id: z.string().uuid(), name: z.string(), size: z.string(), color: z.string(), unitPrice: z.number().int(), quantity: z.number().int(), lineTotal: z.number().int() })),
   /** Present only while the order is pending. */
@@ -145,7 +148,7 @@ async function loadDetail(c: { get: (k: "db") => import("../lib/db.js").Db }, id
   return {
     ...rowOut(r, locale),
     subtotal: Number(r.subtotal), shippingFee: Number(r.shipping_fee), discountTotal: Number(r.discount_total), discountCode: r.code,
-    deliveryCompany: r.delivery_company, deliveryStatus: r.delivery_status, confirmedAt: iso(r.confirmed_at),
+    deliveryCompany: r.delivery_company, deliveryStatus: r.delivery_status, carrierTrackingUrl: await carrierTrackingUrl(db, r.delivery_company, r.tracking_number), confirmedAt: iso(r.confirmed_at),
     items: items.map((i) => ({ id: i.id, name: i.product_name, size: i.size, color: i.color, unitPrice: Number(i.unit_price), quantity: Number(i.quantity), lineTotal: Number(i.line_total) })),
     customer: pending
       ? {
@@ -158,10 +161,10 @@ async function loadDetail(c: { get: (k: "db") => import("../lib/db.js").Db }, id
 }
 
 /** WhatsApp link with the tracking number and the order page typed for the customer. Built while his phone is still in our database. */
-async function trackingWhatsapp(db: import("../lib/db.js").Db, id: string, tracking: string): Promise<string | null> {
+async function trackingWhatsapp(db: import("../lib/db.js").Db, id: string, tracking: string, company: string): Promise<string | null> {
   const o = (await db.query<{ order_number: string; public_token: string; locale: "ar" | "fr" | "en"; customer_phone: string | null; customer_name: string | null }>(`select order_number, public_token, locale, customer_phone, customer_name from public.orders where id = $1 and status = 'pending'`, [id]))[0];
   if (!o?.customer_phone) return null;
-  const text = render((await loadMessages(db)).tracking[o.locale], { name: o.customer_name, number: o.order_number, tracking, link: orderPageUrl(getEnv().WEB_ORIGIN[0], o.locale, Number(o.order_number), o.public_token) });
+  const text = render((await loadMessages(db)).tracking[o.locale], { name: o.customer_name, number: o.order_number, tracking, link: orderPageUrl(getEnv().WEB_ORIGIN[0], o.locale, Number(o.order_number), o.public_token), carrierLink: await carrierTrackingUrl(db, company, tracking) });
   return waLink(o.customer_phone, text);
 }
 
@@ -224,7 +227,7 @@ adminOrderRoutes.openapi(
       company = provider.id;
       tracking = parcel.trackingNumber;
       status = parcel.status;
-      const trackingUrl = await trackingWhatsapp(db, id, tracking);
+      const trackingUrl = await trackingWhatsapp(db, id, tracking, company);
       try {
         await db.query(`select public.confirm_order($1, $2, $3, $4)`, [id, company, tracking, status]);
       } catch (e) {
@@ -235,7 +238,7 @@ adminOrderRoutes.openapi(
       return c.json(await loadDetail(c, id, c.req.valid("query").locale, trackingUrl), 200);
     }
     // Manual tracking number: saved and personal data erased atomically in the database function.
-    const trackingUrl = await trackingWhatsapp(db, id, tracking);
+    const trackingUrl = await trackingWhatsapp(db, id, tracking, company);
     await db.query(`select public.confirm_order($1, $2, $3, $4)`, [id, company, tracking, status]);
     return c.json(await loadDetail(c, id, c.req.valid("query").locale, trackingUrl), 200);
   },

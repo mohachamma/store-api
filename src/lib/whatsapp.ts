@@ -8,7 +8,7 @@ export type Messages = Record<MessageKey, Record<Locale, string>>;
 
 /**
  * Texts of the three WhatsApp messages (editable from the dashboard).
- * Placeholders: {name} {number} {total} {tracking} {link}
+ * Placeholders: {name} {number} {total} {tracking} {link} (our order page) {carrierLink} (the delivery company's tracking page, when saved)
  *  - ask:      the store writes to the customer to ask him to confirm the order
  *  - confirm:  the customer writes to the store to confirm (button on the order page)
  *  - tracking: the store sends the tracking number and link after approving the order

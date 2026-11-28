@@ -3,6 +3,7 @@ import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery } from "../lib/i18n.js";
 import { optionalUserId } from "../lib/auth.js";
 import { getSetting } from "../lib/catalog.js";
+import { carrierTrackingUrl } from "../lib/delivery/index.js";
 import { computeQuote, createOrder } from "../lib/orders.js";
 import { syncTracking } from "../lib/tracking.js";
 import { loadMessages, render, waLink } from "../lib/whatsapp.js";
@@ -77,6 +78,8 @@ const OrderView = z
     trackingNumber: z.string().nullable(),
     /** The delivery company's own status text for the parcel (as it reports it), when known. */
     deliveryStatus: z.string().nullable(),
+    /** The delivery company's own tracking page for this parcel (the owner sets the link in the dashboard), or null. */
+    carrierTrackingUrl: z.string().nullable(),
     /** WhatsApp link to the store with "I confirm my order #N" already typed (null when the store has no WhatsApp number). */
     whatsappConfirmUrl: z.string().nullable(),
     createdAt: z.string(),
@@ -170,9 +173,9 @@ orderRoutes.openapi(
       await Promise.race([syncTracking(db, c.get("delivery"), stale).catch(() => null), new Promise((r) => setTimeout(r, 4000))]);
     }
     const o = (
-      await db.query<{ id: string; order_number: string; status: "pending"; payment_method: "cod"; payment_status: "unpaid"; delivery_type: "home"; name_ar: string; name_fr: string; subtotal: number; shipping_fee: number; discount_total: number; total: number; tracking_number: string | null; delivery_status: string | null; created_at: unknown }>(
+      await db.query<{ id: string; order_number: string; status: "pending"; payment_method: "cod"; payment_status: "unpaid"; delivery_type: "home"; name_ar: string; name_fr: string; subtotal: number; shipping_fee: number; discount_total: number; total: number; tracking_number: string | null; delivery_status: string | null; delivery_company: string | null; created_at: unknown }>(
         `select o.id, o.order_number, o.status, o.payment_method, o.payment_status, o.delivery_type, w.name_ar, w.name_fr,
-                o.subtotal, o.shipping_fee, o.discount_total, o.total, o.tracking_number, o.delivery_status, o.created_at
+                o.subtotal, o.shipping_fee, o.discount_total, o.total, o.tracking_number, o.delivery_status, o.delivery_company, o.created_at
            from public.orders o join public.wilayas w on w.code = o.wilaya_code
           where o.order_number = $1 and o.public_token = $2`,
         [orderNumber, token],
@@ -189,6 +192,7 @@ orderRoutes.openapi(
       {
         whatsappConfirmUrl: storeWa && o.status === "pending" ? waLink(storeWa, confirmText) : null,
         deliveryStatus: o.delivery_status,
+        carrierTrackingUrl: await carrierTrackingUrl(db, o.delivery_company, o.tracking_number),
         orderNumber: Number(o.order_number), status: o.status, paymentMethod: o.payment_method, paymentStatus: o.payment_status, deliveryType: o.delivery_type,
         wilaya: locale === "ar" ? o.name_ar : o.name_fr, subtotal: Number(o.subtotal), shippingFee: Number(o.shipping_fee), discountTotal: Number(o.discount_total), total: Number(o.total),
         trackingNumber: o.tracking_number, createdAt: new Date(o.created_at as string).toISOString(),

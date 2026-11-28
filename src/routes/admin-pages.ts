@@ -93,7 +93,7 @@ adminPagesRoutes.openapi(
 const MessageText = z.object({ ar: z.string().trim().max(700), fr: z.string().trim().max(700), en: z.string().trim().max(700) });
 const WhatsappMessages = z
   .object({ ask: MessageText, confirm: MessageText, tracking: MessageText })
-  .openapi("WhatsappMessages", { description: "Placeholders: {name} {number} {total} {tracking} {link}. An empty text brings back the default one." });
+  .openapi("WhatsappMessages", { description: "Placeholders: {name} {number} {total} {tracking} {link} {carrierLink}. An empty text brings back the default one." });
 
 adminPagesRoutes.openapi(
   createRoute({ method: "get", path: "/admin/whatsapp-messages", tags: ["Admin"], security, summary: "The three WhatsApp message texts (defaults filled in)", responses: { 200: json(WhatsappMessages, "OK"), ...errors } }),
