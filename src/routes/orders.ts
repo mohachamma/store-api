@@ -4,6 +4,7 @@ import { LocaleQuery } from "../lib/i18n.js";
 import { optionalUserId } from "../lib/auth.js";
 import { AttributionSchema, cleanAttribution } from "../lib/attribution.js";
 import { getSetting } from "../lib/catalog.js";
+import { ipKey, trustedClientIp } from "../lib/fingerprint.js";
 import { carrierTrackingUrl } from "../lib/delivery/index.js";
 import { computeQuote, createOrder } from "../lib/orders.js";
 import { syncTracking } from "../lib/tracking.js";
@@ -129,7 +130,7 @@ orderRoutes.openapi(
     const pay = c.get("payment");
     if (b.paymentMethod === "chargily" && !pay.configured()) throw new ApiError(422, "payment_unavailable", "Card payment is not available right now");
     const customerId = await optionalUserId(c.req.header("authorization"), db);
-    const r = await createOrder(db, { customerId, items: b.items, wilayaCode: b.wilayaCode, deliveryType: b.deliveryType, discountCode: b.discountCode, customer: b.customer, paymentMethod: b.paymentMethod, locale: b.locale, attribution: cleanAttribution(b.attribution) });
+    const r = await createOrder(db, { customerId, items: b.items, wilayaCode: b.wilayaCode, deliveryType: b.deliveryType, discountCode: b.discountCode, customer: b.customer, paymentMethod: b.paymentMethod, locale: b.locale, attribution: cleanAttribution(b.attribution), ipKey: ipKey(trustedClientIp({ get: (n) => c.req.header(n) })) });
     let checkoutUrl: string | null = null;
     if (b.paymentMethod === "chargily") {
       try {

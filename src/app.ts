@@ -4,6 +4,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { getEnv } from "./env.js";
 import { lazyDb, type Db } from "./lib/db.js";
 import { errorBody, handleError } from "./lib/errors.js";
+import { supabaseAdmins, type AdminDirectory } from "./lib/admins.js";
 import { requireAdmin, requireUser } from "./lib/auth.js";
 import { buildProviders } from "./lib/delivery/index.js";
 import { chargily } from "./lib/payments/chargily.js";
@@ -17,6 +18,8 @@ import { adminHomeRoutes } from "./routes/admin-home.js";
 import { adminPagesRoutes } from "./routes/admin-pages.js";
 import { adminOrderRoutes } from "./routes/admin-orders.js";
 import { adminAdsRoutes } from "./routes/admin-ads.js";
+import { adminCustomerRoutes } from "./routes/admin-customers.js";
+import { adminTeamRoutes } from "./routes/admin-team.js";
 import { adminProfitRoutes } from "./routes/admin-profit.js";
 import { adminStoreRoutes } from "./routes/admin-store.js";
 import { adminRoutes } from "./routes/admin.js";
@@ -35,17 +38,18 @@ export const OPENAPI_INFO = {
   openapi: "3.1.0",
   info: {
     title: "Store API",
-    version: "0.19.0",
+    version: "0.21.0",
     description: "API for the store storefront (store-web) and admin dashboard (store-admin).",
   },
 } as const;
 
 /** `deps.db` lets tests inject an in-process database; production connects lazily from DATABASE_URL. */
-export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Record<string, DeliveryProvider>; payment?: PaymentProvider } = {}) {
+export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Record<string, DeliveryProvider>; payment?: PaymentProvider; admins?: AdminDirectory } = {}) {
   const db = deps.db ?? lazyDb();
   const storage = deps.storage ?? r2Storage;
   const delivery = deps.delivery ?? buildProviders();
   const payment = deps.payment ?? chargily();
+  const admins = deps.admins ?? supabaseAdmins();
   const app = new OpenAPIHono<AppEnv>({
     // Uniform validation error format for every route.
     defaultHook: (result, c) => {
@@ -60,6 +64,7 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Re
     c.set("storage", storage);
     c.set("delivery", delivery);
     c.set("payment", payment);
+    c.set("admins", admins);
     await next();
   });
   app.use("*", secureHeaders());
@@ -99,6 +104,8 @@ export function createApp(deps: { db?: Db; storage?: ImageStorage; delivery?: Re
   app.route("/", adminStoreRoutes);
   app.route("/", adminProfitRoutes);
   app.route("/", adminAdsRoutes);
+  app.route("/", adminCustomerRoutes);
+  app.route("/", adminTeamRoutes);
   app.route("/", adminDeliveryRoutes);
   app.route("/", adminHomeRoutes);
   app.route("/", adminPagesRoutes);
