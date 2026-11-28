@@ -1,5 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
+import { riskOf } from "../lib/buyers.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
+import { buyerCode } from "../lib/fingerprint.js";
 import type { AppEnv } from "../lib/types.js";
 
 const json = <T extends z.ZodTypeAny>(schema: T, description: string) => ({ description, content: { "application/json": { schema } } });
@@ -140,5 +142,78 @@ adminCustomerRoutes.openapi(
     const r = await c.get("db").query(`update public.customers set admin_note = $2 where id = $1 returning id`, [id, note || null]);
     if (!r.length) throw new ApiError(404, "not_found", "Customer not found");
     return c.json({ ok: true as const }, 200);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Repeat buyers and refused parcels, by phone fingerprint (no phone number is kept)
+// ---------------------------------------------------------------------------
+const Buyer = z
+  .object({
+    code: z.string().openapi({ description: "Short label of the fingerprint, to tell buyers apart (e.g. A3F9-12BC). It is not the phone number." }),
+    orders: z.number().int().openapi({ description: "Orders placed (cancelled ones excluded)" }),
+    delivered: z.number().int(),
+    returned: z.number().int(),
+    cancelled: z.number().int(),
+    spent: z.number().int(),
+    lastOrderAt: z.string(),
+    risk: z.enum(["loyal", "watch", "high"]).nullable(),
+    recentOrders: z.array(z.object({ id: z.string().uuid(), orderNumber: z.number().int(), status: z.enum(["pending", "confirmed", "shipped", "delivered", "cancelled", "returned"]), total: z.number().int(), createdAt: z.string() })),
+  })
+  .openapi("AdminBuyer");
+const BuyerList = z.object({ items: z.array(Buyer), total: z.number().int(), counts: z.object({ repeat: z.number().int(), returners: z.number().int() }) }).openapi("AdminBuyerList");
+
+adminCustomerRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/admin/buyers",
+    tags: ["Admin"],
+    security,
+    summary:
+      "Buyers recognised by the one-way fingerprint of their phone number, with or without an account: repeat buyers (2+ orders) or buyers whose parcels came back. " +
+      "Nobody's number is stored, so a buyer is shown by a short code and his orders. Needs FINGERPRINT_SECRET; orders placed before it was set are not included.",
+    request: { query: z.object({ kind: z.enum(["repeat", "returners"]).default("repeat"), limit: z.coerce.number().int().min(1).max(100).default(30), offset: z.coerce.number().int().min(0).default(0) }) },
+    responses: { 200: json(BuyerList, "OK"), ...errors },
+  }),
+  async (c) => {
+    const { kind, limit, offset } = c.req.valid("query");
+    const db = c.get("db");
+    const base = `from public.orders where phone_key is not null group by phone_key`;
+    const orders = `count(*) filter (where status <> 'cancelled')`;
+    const having = kind === "repeat" ? `having ${orders} >= 2` : `having count(*) filter (where status = 'returned') >= 1`;
+    const order = kind === "repeat" ? `${orders} desc, max(created_at) desc` : `count(*) filter (where status = 'returned') desc, max(created_at) desc`;
+    const [rows, count, counts] = await Promise.all([
+      db.query<{ phone_key: string; orders: number; delivered: number; returned: number; cancelled: number; spent: number; last_order_at: unknown }>(
+        `select phone_key, ${orders}::int as orders, count(*) filter (where status = 'delivered')::int as delivered, count(*) filter (where status = 'returned')::int as returned,
+                count(*) filter (where status = 'cancelled')::int as cancelled, coalesce(sum(total) filter (where status = 'delivered'), 0)::int as spent, max(created_at) as last_order_at
+           ${base} ${having} order by ${order} limit ${limit} offset ${offset}`,
+      ),
+      db.query<{ n: number }>(`select count(*)::int as n from (select 1 ${base} ${having}) x`),
+      db.query<{ repeat: number; returners: number }>(
+        `select count(*) filter (where o >= 2)::int as repeat, count(*) filter (where r >= 1)::int as returners
+           from (select ${orders} as o, count(*) filter (where status = 'returned') as r ${base}) x`,
+      ),
+    ]);
+    const keys = rows.map((r) => r.phone_key);
+    const recent = keys.length
+      ? await db.query<{ id: string; order_number: string; status: "pending"; total: number; created_at: unknown; phone_key: string }>(
+          `select id, order_number, status, total, created_at, phone_key from (
+             select o.*, row_number() over (partition by phone_key order by created_at desc) as rn from public.orders o where phone_key = any($1::text[])
+           ) x where rn <= 8 order by created_at desc`,
+          [keys],
+        )
+      : [];
+    return c.json(
+      {
+        items: rows.map((r) => ({
+          code: buyerCode(r.phone_key), orders: Number(r.orders), delivered: Number(r.delivered), returned: Number(r.returned), cancelled: Number(r.cancelled), spent: Number(r.spent),
+          lastOrderAt: iso(r.last_order_at)!, risk: riskOf({ delivered: Number(r.delivered), returned: Number(r.returned) }),
+          recentOrders: recent.filter((o) => o.phone_key === r.phone_key).map((o) => ({ id: o.id, orderNumber: Number(o.order_number), status: o.status, total: Number(o.total), createdAt: iso(o.created_at)! })),
+        })),
+        total: Number(count[0]?.n ?? 0),
+        counts: { repeat: Number(counts[0]?.repeat ?? 0), returners: Number(counts[0]?.returners ?? 0) },
+      },
+      200,
+    );
   },
 );

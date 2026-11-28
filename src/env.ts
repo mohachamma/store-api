@@ -40,6 +40,13 @@ const EnvSchema = z.object({
   DELIVERY_FROM_WILAYA: z.string().min(1).optional(),
   /** Vercel Cron sends this as "Authorization: Bearer <value>" to /cron/*. Secret. */
   CRON_SECRET: z.string().min(16).optional(),
+  /**
+   * Secret key for the one-way fingerprints of phone numbers and connections (to recognise repeat buyers and refused parcels
+   * without keeping the number). Use a long random value, keep it in Vercel env only, and NEVER change it later (old fingerprints would stop matching). Secret.
+   */
+  FINGERPRINT_SECRET: z.string().min(32).optional(),
+  /** Shared with the storefront, which forwards the visitor's IP address with it (otherwise the API only sees the storefront's server). Secret. */
+  STOREFRONT_SECRET: z.string().min(16).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

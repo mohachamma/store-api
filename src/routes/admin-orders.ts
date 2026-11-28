@@ -3,6 +3,7 @@ import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery, pick, type Locale } from "../lib/i18n.js";
 import { imageUrl } from "../lib/media.js";
 import { getActiveProviderId } from "../lib/delivery/index.js";
+import { buyerHistory, risksFor } from "../lib/buyers.js";
 import { carrierTrackingUrl } from "../lib/delivery/index.js";
 import { moveOrder } from "../lib/order-status.js";
 import { toWhatsappNumber } from "../lib/orders.js";
@@ -39,6 +40,8 @@ const OrderRow = z
     customerPhone: z.string().nullable(),
     /** The ad the customer came from (null = no ad tags: direct visit, search, word of mouth). */
     ad: z.object({ source: z.string().nullable(), medium: z.string().nullable(), campaign: z.string().nullable(), content: z.string().nullable() }).nullable(),
+    /** What this buyer did on his other orders (same phone fingerprint): loyal / watch (one parcel came back) / high (two or more), or null. */
+    buyerRisk: z.enum(["loyal", "watch", "high"]).nullable(),
   })
   .openapi("AdminOrderRow");
 
@@ -57,6 +60,8 @@ const OrderDetail = OrderRow.extend({
   items: z.array(z.object({ id: z.string().uuid(), name: z.string(), size: z.string(), color: z.string(), unitPrice: z.number().int(), quantity: z.number().int(), lineTotal: z.number().int() })),
   /** Present only while the order is pending. */
   customer: z.object({ name: z.string(), phone: z.string(), commune: z.string(), daira: z.string().nullable(), address: z.string(), whatsappUrl: z.string(), whatsappAskUrl: z.string(), telUrl: z.string() }).nullable(),
+  /** The buyer's history by phone fingerprint (no phone number is kept). Null when the order has no fingerprint (orders before this feature, or FINGERPRINT_SECRET not set). */
+  buyer: z.object({ code: z.string(), previousOrders: z.number().int(), delivered: z.number().int(), returned: z.number().int(), cancelled: z.number().int(), risk: z.enum(["loyal", "watch", "high"]).nullable(), sameConnectionOthers: z.number().int() }).nullable(),
   whatsappTrackingUrl: z.string().nullable().openapi({ description: "Only in the answer to 'confirm': a WhatsApp link with the tracking number and page already typed for the customer (his phone is erased right after, so this is the only chance)" }),
 }).openapi("AdminOrderDetail");
 
@@ -64,19 +69,20 @@ type Row = {
   id: string; order_number: string; status: z.infer<typeof Status>; payment_method: "cod" | "chargily"; payment_status: z.infer<typeof PaymentStatus>;
   delivery_type: "home" | "desk"; wilaya_code: number; name_ar: string; name_fr: string; total: number; item_count: number; tracking_number: string | null;
   created_at: unknown; customer_name: string | null; customer_phone: string | null;
-  ad_source: string | null; ad_medium: string | null; ad_campaign: string | null; ad_content: string | null;
+  ad_source: string | null; ad_medium: string | null; ad_campaign: string | null; ad_content: string | null; phone_key: string | null;
 };
 const wname = (r: Row, locale: Locale) => (locale === "ar" ? r.name_ar : r.name_fr);
-const rowOut = (r: Row, locale: Locale) => ({
+const rowOut = (r: Row, locale: Locale, risk: Awaited<ReturnType<typeof risksFor>> = new Map()) => ({
   id: r.id, orderNumber: Number(r.order_number), status: r.status, paymentMethod: r.payment_method, paymentStatus: r.payment_status, deliveryType: r.delivery_type,
   wilayaCode: Number(r.wilaya_code), wilaya: wname(r, locale), total: Number(r.total), itemCount: Number(r.item_count), trackingNumber: r.tracking_number,
   createdAt: iso(r.created_at)!, customerName: r.customer_name, customerPhone: r.customer_phone,
+  buyerRisk: risk.get(r.id) ?? null,
   ad: r.ad_source || r.ad_medium || r.ad_campaign || r.ad_content ? { source: r.ad_source, medium: r.ad_medium, campaign: r.ad_campaign, content: r.ad_content } : null,
 });
 const BASE_SELECT = `
   select o.id, o.order_number, o.status, o.payment_method, o.payment_status, o.delivery_type, o.wilaya_code, w.name_ar, w.name_fr, o.total,
          (select coalesce(sum(i.quantity), 0)::int from public.order_items i where i.order_id = o.id) as item_count,
-         o.tracking_number, o.created_at, o.customer_name, o.customer_phone, o.ad_source, o.ad_medium, o.ad_campaign, o.ad_content
+         o.tracking_number, o.created_at, o.customer_name, o.customer_phone, o.ad_source, o.ad_medium, o.ad_campaign, o.ad_content, o.phone_key
     from public.orders o join public.wilayas w on w.code = o.wilaya_code`;
 
 export const adminOrderRoutes = new OpenAPIHono<AppEnv>();
@@ -125,7 +131,8 @@ adminOrderRoutes.openapi(
       db.query<Row>(`${BASE_SELECT} ${w} order by o.created_at desc, o.id limit ${add(f.limit)} offset ${add(f.offset)}`, params),
       db.query<{ n: number }>(`select count(*)::int as n from public.orders o ${w}`, params.slice(0, params.length - 2)),
     ]);
-    return c.json({ items: rows.map((r) => rowOut(r, f.locale)), total: Number(count[0]?.n ?? 0) }, 200);
+    const risks = await risksFor(db, rows);
+    return c.json({ items: rows.map((r) => rowOut(r, f.locale, risks)), total: Number(count[0]?.n ?? 0) }, 200);
   },
 );
 
@@ -134,7 +141,7 @@ async function loadDetail(c: { get: (k: "db") => import("../lib/db.js").Db }, id
   const r = (await db.query<Row & { order_locale: Locale; subtotal: number; shipping_fee: number; discount_total: number; code: string | null; delivery_company: string | null; delivery_status: string | null; confirmed_at: unknown; address: string | null; commune_ar: string | null; commune_fr: string | null; daira_ar: string | null; daira_fr: string | null }>(
     `select o.id, o.order_number, o.status, o.payment_method, o.payment_status, o.delivery_type, o.wilaya_code, w.name_ar, w.name_fr, o.total,
             (select coalesce(sum(i.quantity), 0)::int from public.order_items i where i.order_id = o.id) as item_count,
-            o.tracking_number, o.created_at, o.customer_name, o.customer_phone, o.ad_source, o.ad_medium, o.ad_campaign, o.ad_content, o.subtotal, o.shipping_fee, o.discount_total, d.code,
+            o.tracking_number, o.created_at, o.customer_name, o.customer_phone, o.ad_source, o.ad_medium, o.ad_campaign, o.ad_content, o.phone_key, o.subtotal, o.shipping_fee, o.discount_total, d.code,
             o.locale as order_locale, o.delivery_company, o.delivery_status, o.confirmed_at, o.address, cm.name_ar as commune_ar, cm.name_fr as commune_fr, cm.daira_ar, cm.daira_fr
        from public.orders o join public.wilayas w on w.code = o.wilaya_code
        left join public.discount_codes d on d.id = o.discount_code_id
@@ -160,6 +167,7 @@ async function loadDetail(c: { get: (k: "db") => import("../lib/db.js").Db }, id
           address: r.address ?? "", whatsappUrl: `https://wa.me/${toWhatsappNumber(r.customer_phone!)}`, whatsappAskUrl: waLink(r.customer_phone!, ask), telUrl: `tel:${r.customer_phone}`,
         }
       : null,
+    buyer: await buyerHistory(db, id),
     whatsappTrackingUrl,
   };
 }
