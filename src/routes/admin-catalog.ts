@@ -226,6 +226,8 @@ const ProductRow = z
     compareAtPrice: z.number().int().nullable(),
     totalStock: z.number().int(),
     variantCount: z.number().int(),
+    /** Color + size combinations with no stock left (at most 30), so the owner sees at a glance what a customer can no longer order. */
+    soldOut: z.array(z.object({ color: z.string(), size: z.string() })),
     image: z.string().nullable(),
   })
   .openapi("AdminProductRow");
@@ -310,10 +312,11 @@ adminCatalogRoutes.openapi(
     const w = where.length ? `where ${where.join(" and ")}` : "";
     const db = c.get("db");
     const [rows, count] = await Promise.all([
-      db.query<{ id: string; slug: string; name: unknown; cat: unknown; is_published: boolean; is_new: boolean; audience: "women" | "men" | "unisex"; price: number | null; compare: number | null; stock: number; n: number; path: string | null }>(
+      db.query<{ id: string; slug: string; name: unknown; cat: unknown; is_published: boolean; is_new: boolean; audience: "women" | "men" | "unisex"; price: number | null; compare: number | null; stock: number; n: number; path: string | null; sold_out: { color: string; size: string }[] }>(
         `select p.id, p.slug, p.name, c.name as cat, p.is_published, p.is_new, p.audience, mv.price, mv.compare_at_price as compare,
                 (select coalesce(sum(v.stock), 0)::int from public.product_variants v where v.product_id = p.id) as stock,
                 (select count(*)::int from public.product_variants v where v.product_id = p.id) as n,
+                (select coalesce(jsonb_agg(jsonb_build_object('color', x.color, 'size', x.size)), '[]'::jsonb) from (select v.color, v.size from public.product_variants v where v.product_id = p.id and v.stock = 0 order by v.color, v.size limit 30) x) as sold_out,
                 (select i.path from public.product_images i where i.product_id = p.id order by i.sort_order, i.id limit 1) as path
            from public.products p join public.categories c on c.id = p.category_id
            left join lateral (select v.price, v.compare_at_price from public.product_variants v where v.product_id = p.id order by v.price, v.id limit 1) mv on true
@@ -321,7 +324,7 @@ adminCatalogRoutes.openapi(
       db.query<{ n: number }>(`select count(*)::int as n from public.products p ${w}`, params.slice(0, params.length - 2)),
     ]);
     return c.json({
-      items: rows.map((r) => ({ id: r.id, slug: r.slug, name: pick(r.name, f.locale as Locale), categoryName: pick(r.cat, f.locale as Locale), isPublished: r.is_published, isNew: r.is_new, audience: r.audience, price: r.price === null ? null : Number(r.price), compareAtPrice: r.compare ? Number(r.compare) : null, totalStock: Number(r.stock), variantCount: Number(r.n), image: imageUrl(r.path) })),
+      items: rows.map((r) => ({ id: r.id, slug: r.slug, name: pick(r.name, f.locale as Locale), categoryName: pick(r.cat, f.locale as Locale), isPublished: r.is_published, isNew: r.is_new, audience: r.audience, price: r.price === null ? null : Number(r.price), compareAtPrice: r.compare ? Number(r.compare) : null, totalStock: Number(r.stock), variantCount: Number(r.n), soldOut: r.sold_out ?? [], image: imageUrl(r.path) })),
       total: Number(count[0]?.n ?? 0),
     }, 200);
   },

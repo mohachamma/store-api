@@ -282,7 +282,7 @@ const Overview = z
     revenueLast7Days: z.array(z.number().int()),
     ordersByStatus: z.object({ pending: z.number().int(), confirmed: z.number().int(), shipped: z.number().int(), delivered: z.number().int(), cancelled: z.number().int(), returned: z.number().int() }),
     topProducts: z.array(z.object({ id: z.string(), name: z.string(), image: z.string(), unitsSold: z.number().int(), revenue: z.number().int() })),
-    lowStock: z.array(z.object({ variantId: z.string(), productName: z.string(), size: z.string(), stock: z.number().int(), image: z.string() })),
+    lowStock: z.array(z.object({ variantId: z.string(), productName: z.string(), size: z.string(), color: z.string(), stock: z.number().int(), image: z.string() })),
   })
   .openapi("AdminOverview");
 
@@ -317,8 +317,8 @@ adminOrderRoutes.openapi(
            left join lateral (select path from public.product_images where product_id = p.id order by sort_order, id limit 1) img on true
           group by p.id, p.name, img.path order by units desc, revenue desc limit 5`,
       ),
-      db.query<{ id: string; name: unknown; size: string; stock: number; image_path: string | null }>(
-        `select v.id, p.name, v.size, v.stock, img.path as image_path
+      db.query<{ id: string; name: unknown; size: string; color: string; stock: number; image_path: string | null }>(
+        `select v.id, p.name, v.size, v.color, v.stock, img.path as image_path
            from public.product_variants v join public.products p on p.id = v.product_id and p.is_published
            left join lateral (select path from public.product_images where product_id = p.id order by sort_order, id limit 1) img on true
           where v.stock <= 3 order by v.stock, p.name->>'ar' limit 8`,
@@ -334,7 +334,7 @@ adminOrderRoutes.openapi(
         revenueLast7Days: daily.map((d) => Number(d.total)),
         ordersByStatus: Object.fromEntries(statuses.map((s) => [s, counts[s] ?? 0])) as Record<(typeof statuses)[number], number>,
         topProducts: top.map((p) => ({ id: p.id, name: pick(p.name, locale), image: imageUrl(p.image_path) ?? "", unitsSold: Number(p.units), revenue: Number(p.revenue) })),
-        lowStock: low.map((v) => ({ variantId: v.id, productName: pick(v.name, locale), size: v.size, stock: Number(v.stock), image: imageUrl(v.image_path) ?? "" })),
+        lowStock: low.map((v) => ({ variantId: v.id, productName: pick(v.name, locale), size: v.size, color: v.color, stock: Number(v.stock), image: imageUrl(v.image_path) ?? "" })),
       },
       200,
     );
