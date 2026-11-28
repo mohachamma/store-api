@@ -233,7 +233,7 @@ adminOrderRoutes.openapi(
     path: "/admin/orders/{id}/status",
     tags: ["Admin"],
     security,
-    summary: "Move an order forward: confirmed → shipped → delivered / returned, or cancel (restores the stock)",
+    summary: "Move an order forward: confirmed → shipped → delivered / returned (the goods go back to stock unless the profit settings say returned goods are lost), or cancel (restores the stock)",
     request: { params: IdParam, query: LocaleOnly, body: body(z.object({ status: z.enum(["shipped", "delivered", "returned", "cancelled"]) })) },
     responses: { 200: json(OrderDetail, "Updated"), ...errors },
   }),
@@ -259,6 +259,13 @@ adminOrderRoutes.openapi(
             where id = $1`,
           [id, status],
         );
+        // A returned parcel goes back on the shelf (unless the owner says returned goods cannot be resold).
+        if (status === "returned") {
+          const lost = (await q.query<{ lost: boolean }>(`select coalesce((value->>'returned_items_lost')::boolean, false) as lost from public.site_settings where key = 'profit'`))[0]?.lost === true;
+          if (!lost) {
+            await q.query(`update public.product_variants v set stock = v.stock + i.quantity from public.order_items i where i.order_id = $1 and i.variant_id = v.id`, [id]);
+          }
+        }
       }
     });
     return c.json(await loadDetail(c, id, c.req.valid("query").locale), 200);

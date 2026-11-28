@@ -101,6 +101,16 @@ describe("net profit", () => {
     expect(r.expenses.byCategory).toEqual([{ category: "ads", amount: 1000 }, { category: "packaging", amount: 300 }]);
     expect(r.netProfit).toBe(price * 2 + fee - 3000 - 400 - 400 - 200 - 1300);
     expect(r.returnRatePercent).toBe(50);
+
+    // The returned parcel went back on the shelf (100 − 2 delivered − 1 returned − 1 pending + 1 back).
+    expect(Number((await pg.query(`select stock from product_variants where sku = 'HEAVY-TEE-BLACK-XL'`)).rows[0]!.stock)).toBe(97);
+
+    // Per product: the return cost stays with the product, and the products add up to the total.
+    const p = r.byProduct.find((x: { unitsSold: number }) => x.unitsSold === 2);
+    expect(p).toMatchObject({ unitsSold: 2, unitsReturned: 1, sales: price * 2, productCost: 3000, deliveryCost: 400, returnLoss: 600 });
+    expect(p.profit).toBe(price * 2 + fee - 3000 - 400 - 600);
+    const sum = r.byProduct.reduce((n: number, x: { profit: number }) => n + x.profit, 0);
+    expect(Math.abs(sum - (r.netProfit + r.expenses.total))).toBeLessThanOrEqual(2);
     expect(r.warnings.activeWilayasWithoutDeliveryCost).toBeGreaterThan(0);
   });
 
@@ -111,6 +121,12 @@ describe("net profit", () => {
     const after = (await admin("GET", `/admin/profit?from=${today}&to=${today}`)).body;
     expect(after.returned.lostGoods).toBe(1500);
     expect(after.netProfit).toBe(before.netProfit - 1500);
+
+    // With "returned goods are lost" the parcel does NOT go back to stock.
+    const stockBefore = Number((await pg.query(`select stock from product_variants where sku = 'HEAVY-TEE-BLACK-L'`)).rows[0]!.stock);
+    const o = await place("HEAVY-TEE-BLACK-L", 1);
+    await admin("POST", `/admin/orders/${await deliver(o.body.orderNumber)}/status`, { status: "returned" });
+    expect(Number((await pg.query(`select stock from product_variants where sku = 'HEAVY-TEE-BLACK-L'`)).rows[0]!.stock)).toBe(stockBefore - 1);
   });
 
   it("warns about goods without a cost price", async () => {

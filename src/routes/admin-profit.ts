@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { getSetting } from "../lib/catalog.js";
+import { LocaleQuery, pick, type Locale } from "../lib/i18n.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -12,6 +13,7 @@ const Id = z.object({ id: z.string().uuid() });
 const TZ = "Africa/Algiers";
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-31");
 const Range = z.object({ from: DateStr.optional(), to: DateStr.optional() });
+const ProfitQuery = Range.extend({ locale: LocaleQuery });
 
 export const CATEGORIES = ["ads", "packaging", "salaries", "rent", "other"] as const;
 
@@ -152,6 +154,21 @@ const ProfitReport = z
     netProfit: z.number().int(),
     returnRatePercent: z.number().int().openapi({ description: "Returned parcels out of delivered + returned" }),
     warnings: z.object({ itemsWithoutCost: z.number().int(), activeWilayasWithoutDeliveryCost: z.number().int() }),
+    byProduct: z
+      .array(
+        z.object({
+          key: z.string(),
+          name: z.string(),
+          unitsSold: z.number().int(),
+          unitsReturned: z.number().int(),
+          sales: z.number().int(),
+          productCost: z.number().int(),
+          deliveryCost: z.number().int().openapi({ description: "Share of the delivery cost of the parcels that carried this product" }),
+          returnLoss: z.number().int().openapi({ description: "Share of what the returned parcels cost (delivery + return fee [+ goods if lost]); this is the return cost carried by the product even when it is resold later" }),
+          profit: z.number().int().openapi({ description: "Before ads, other expenses and card fees" }),
+        }),
+      )
+      .openapi({ description: "Profit per product, best first. Order-level amounts (delivery fees, delivery cost, discounts, return costs) are shared between the products of a parcel in proportion to their value." }),
   })
   .openapi("ProfitReport");
 
@@ -164,20 +181,22 @@ adminProfitRoutes.openapi(
     summary:
       "Net profit for a period (default: this month, Algeria time). Counts parcels by the day they were delivered or returned: " +
       "sales + delivery fees collected − product cost − delivery cost − card fees − losses on returns − expenses.",
-    request: { query: Range },
+    request: { query: ProfitQuery },
     responses: { 200: json(ProfitReport, "OK"), ...errors },
   }),
   async (c) => {
     const db = c.get("db");
-    const { from, to } = c.req.valid("query");
+    const { from, to, locale } = c.req.valid("query");
     const range = (await db.query<{ f: string; t: string }>(`select to_char(coalesce($1::date, ${FROM_DEFAULT}), 'YYYY-MM-DD') as f, to_char(coalesce($2::date, ${TO_DEFAULT}), 'YYYY-MM-DD') as t`, [from ?? null, to ?? null]))[0]!;
     if (range.f > range.t) throw new ApiError(422, "invalid_range", "The start date is after the end date");
     const p = [range.f, range.t];
     const delivered = `o.status = 'delivered' and (coalesce(o.delivered_at, o.updated_at) at time zone '${TZ}')::date between $1::date and $2::date`;
     const returned = `o.status = 'returned' and (coalesce(o.returned_at, o.updated_at) at time zone '${TZ}')::date between $1::date and $2::date`;
 
-    const [settings, d, dItems, r, rItems, ex, wil] = await Promise.all([
-      readSettings(db),
+    const lineShare = `i.line_total::numeric / nullif(o.subtotal, 0)`;
+    const productKey = `coalesce(v.product_id::text, i.product_name)`;
+    const settings = await readSettings(db);
+    const [d, dItems, r, rItems, ex, wil, dProducts, rProducts] = await Promise.all([
       db.query<{ n: number; sales: number; shipping: number; delivery: number; card: number }>(
         `select count(*)::int as n, coalesce(sum(o.subtotal - o.discount_total), 0)::int as sales, coalesce(sum(o.shipping_fee), 0)::int as shipping,
                 coalesce(sum(o.delivery_cost), 0)::int as delivery, coalesce(sum(o.total) filter (where o.payment_method = 'chargily'), 0)::int as card
@@ -189,6 +208,22 @@ adminProfitRoutes.openapi(
       db.query<{ cost: number }>(`select coalesce(sum(i.unit_cost * i.quantity), 0)::int as cost from public.order_items i join public.orders o on o.id = i.order_id where ${returned}`, p),
       db.query<{ category: (typeof CATEGORIES)[number]; amount: number }>(`select category, sum(amount)::int as amount from public.expenses where spent_on between $1::date and $2::date group by category order by amount desc`, p),
       db.query<{ n: number }>(`select count(*)::int as n from public.wilayas where active and home_cost = 0 and desk_cost = 0`),
+      db.query<{ key: string; name: unknown; fallback: string; units: number; sales: number; cost: number; delivery: number; shipping: number }>(
+        `select ${productKey} as key, max(p.name::text)::jsonb as name, max(i.product_name) as fallback, sum(i.quantity)::int as units,
+                sum(i.line_total - o.discount_total * ${lineShare}) as sales,
+                sum(coalesce(i.unit_cost, 0) * i.quantity) as cost,
+                sum(o.delivery_cost * ${lineShare}) as delivery,
+                sum(o.shipping_fee * ${lineShare}) as shipping
+           from public.order_items i join public.orders o on o.id = i.order_id
+           left join public.product_variants v on v.id = i.variant_id left join public.products p on p.id = v.product_id
+          where ${delivered} group by 1`, p),
+      db.query<{ key: string; name: unknown; fallback: string; units: number; delivery: number; goods: number }>(
+        `select ${productKey} as key, max(p.name::text)::jsonb as name, max(i.product_name) as fallback, sum(i.quantity)::int as units,
+                sum((o.delivery_cost + $3) * ${lineShare}) as delivery,
+                sum(coalesce(i.unit_cost, 0) * i.quantity) as goods
+           from public.order_items i join public.orders o on o.id = i.order_id
+           left join public.product_variants v on v.id = i.variant_id left join public.products p on p.id = v.product_id
+          where ${returned} group by 1`, [...p, settings.returnFee]),
     ]);
 
     const dr = d[0]!;
@@ -202,6 +237,32 @@ adminProfitRoutes.openapi(
     const net = Number(dr.sales) + Number(dr.shipping) - productCost - Number(dr.delivery) - cardFees - deliveryLoss - returnFees - lostGoods - expensesTotal;
     const parcels = Number(dr.n) + returnedCount;
 
+    // Profit per product: the return cost of a returned parcel stays with its products, even when they are resold in another order.
+    const prod = new Map<string, { name: string; sold: number; returned: number; sales: number; cost: number; delivery: number; shipping: number; returnLoss: number }>();
+    const entry = (key: string, name: unknown, fallback: string) => {
+      let e = prod.get(key);
+      if (!e) prod.set(key, (e = { name: name ? pick(name, locale as Locale) || fallback : fallback, sold: 0, returned: 0, sales: 0, cost: 0, delivery: 0, shipping: 0, returnLoss: 0 }));
+      return e;
+    };
+    for (const x of dProducts) Object.assign(entry(x.key, x.name, x.fallback), { sold: Number(x.units), sales: Number(x.sales), cost: Number(x.cost), delivery: Number(x.delivery), shipping: Number(x.shipping) });
+    for (const x of rProducts) {
+      const e = entry(x.key, x.name, x.fallback);
+      e.returned = Number(x.units);
+      // delivery already paid + the return fee, shared by value between the parcel's products [+ the goods if they cannot be resold]
+      e.returnLoss = Number(x.delivery) + (settings.returnedItemsLost ? Number(x.goods) : 0);
+    }
+    const byProduct = [...prod].map(([key, e]) => ({
+      key,
+      name: e.name,
+      unitsSold: e.sold,
+      unitsReturned: e.returned,
+      sales: Math.round(e.sales),
+      productCost: Math.round(e.cost),
+      deliveryCost: Math.round(e.delivery),
+      returnLoss: Math.round(e.returnLoss),
+      profit: Math.round(e.sales + e.shipping - e.cost - e.delivery - e.returnLoss),
+    })).sort((a, b) => b.profit - a.profit).slice(0, 100);
+
     return c.json(
       {
         from: range.f,
@@ -212,6 +273,7 @@ adminProfitRoutes.openapi(
         netProfit: net,
         returnRatePercent: parcels ? Math.round((returnedCount / parcels) * 100) : 0,
         warnings: { itemsWithoutCost: Number(dItems[0]!.missing), activeWilayasWithoutDeliveryCost: Number(wil[0]!.n) },
+        byProduct,
       },
       200,
     );
