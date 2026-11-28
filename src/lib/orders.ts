@@ -116,7 +116,7 @@ export interface CustomerInput {
 }
 
 /** Creates a pending cash-on-delivery order atomically: stock is reserved, the discount counted, an admin event emitted. */
-export async function createOrder(db: Db, input: OrderInput & { customer: CustomerInput; paymentMethod: "cod" | "chargily"; customerId?: string | null; locale?: "ar" | "fr" | "en" }) {
+export async function createOrder(db: Db, input: OrderInput & { customer: CustomerInput; paymentMethod: "cod" | "chargily"; customerId?: string | null; locale?: "ar" | "fr" | "en"; attribution?: { source: string | null; medium: string | null; campaign: string | null; content: string | null } }) {
   const phone = normalizePhone(input.customer.phone);
   if (!phone) throw new ApiError(422, "invalid_phone", "Enter a valid Algerian phone number");
 
@@ -148,10 +148,10 @@ export async function createOrder(db: Db, input: OrderInput & { customer: Custom
     const order = (
       await q.query<{ id: string; order_number: string; public_token: string }>(
         `insert into public.orders (customer_id, payment_method, payment_status, delivery_type, wilaya_code, discount_code_id, subtotal, shipping_fee, discount_total, total,
-                                    customer_name, customer_phone, commune_id, address, locale)
-         values ($14, $1, $13, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $15) returning id, order_number, public_token`,
+                                    customer_name, customer_phone, commune_id, address, locale, ad_source, ad_medium, ad_campaign, ad_content)
+         values ($14, $1, $13, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $15, $16, $17, $18, $19) returning id, order_number, public_token`,
         [input.paymentMethod, input.deliveryType, input.wilayaCode, quote.discount?.id ?? null, quote.subtotal, quote.shippingFee, quote.discountTotal, quote.total,
-         input.customer.name.trim(), phone, input.customer.communeId, input.customer.address.trim(), input.paymentMethod === "chargily" ? "pending" : "unpaid", input.customerId ?? null, input.locale ?? "ar"],
+         input.customer.name.trim(), phone, input.customer.communeId, input.customer.address.trim(), input.paymentMethod === "chargily" ? "pending" : "unpaid", input.customerId ?? null, input.locale ?? "ar", input.attribution?.source ?? null, input.attribution?.medium ?? null, input.attribution?.campaign ?? null, input.attribution?.content ?? null],
       )
     )[0]!;
     for (const l of quote.lines) {
