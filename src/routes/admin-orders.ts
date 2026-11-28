@@ -3,7 +3,11 @@ import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { LocaleQuery, pick, type Locale } from "../lib/i18n.js";
 import { imageUrl } from "../lib/media.js";
 import { getActiveProviderId } from "../lib/delivery/index.js";
+import { carrierTrackingUrl } from "../lib/delivery/index.js";
+import { moveOrder } from "../lib/order-status.js";
 import { toWhatsappNumber } from "../lib/orders.js";
+import { loadMessages, orderPageUrl, render, waLink } from "../lib/whatsapp.js";
+import { getEnv } from "../env.js";
 import type { AppEnv } from "../lib/types.js";
 
 const json = <T extends z.ZodTypeAny>(schema: T, description: string) => ({ description, content: { "application/json": { schema } } });
@@ -45,10 +49,13 @@ const OrderDetail = OrderRow.extend({
   discountCode: z.string().nullable(),
   deliveryCompany: z.string().nullable(),
   deliveryStatus: z.string().nullable(),
+  /** The delivery company's tracking page for this parcel (opens the parcel on its site), or null when no link is saved. */
+  carrierTrackingUrl: z.string().nullable(),
   confirmedAt: z.string().nullable(),
   items: z.array(z.object({ id: z.string().uuid(), name: z.string(), size: z.string(), color: z.string(), unitPrice: z.number().int(), quantity: z.number().int(), lineTotal: z.number().int() })),
   /** Present only while the order is pending. */
-  customer: z.object({ name: z.string(), phone: z.string(), commune: z.string(), daira: z.string().nullable(), address: z.string(), whatsappUrl: z.string(), telUrl: z.string() }).nullable(),
+  customer: z.object({ name: z.string(), phone: z.string(), commune: z.string(), daira: z.string().nullable(), address: z.string(), whatsappUrl: z.string(), whatsappAskUrl: z.string(), telUrl: z.string() }).nullable(),
+  whatsappTrackingUrl: z.string().nullable().openapi({ description: "Only in the answer to 'confirm': a WhatsApp link with the tracking number and page already typed for the customer (his phone is erased right after, so this is the only chance)" }),
 }).openapi("AdminOrderDetail");
 
 type Row = {
@@ -118,13 +125,13 @@ adminOrderRoutes.openapi(
   },
 );
 
-async function loadDetail(c: { get: (k: "db") => import("../lib/db.js").Db }, id: string, locale: Locale) {
+async function loadDetail(c: { get: (k: "db") => import("../lib/db.js").Db }, id: string, locale: Locale, whatsappTrackingUrl: string | null = null) {
   const db = c.get("db");
-  const r = (await db.query<Row & { subtotal: number; shipping_fee: number; discount_total: number; code: string | null; delivery_company: string | null; delivery_status: string | null; confirmed_at: unknown; address: string | null; commune_ar: string | null; commune_fr: string | null; daira_ar: string | null; daira_fr: string | null }>(
+  const r = (await db.query<Row & { order_locale: Locale; subtotal: number; shipping_fee: number; discount_total: number; code: string | null; delivery_company: string | null; delivery_status: string | null; confirmed_at: unknown; address: string | null; commune_ar: string | null; commune_fr: string | null; daira_ar: string | null; daira_fr: string | null }>(
     `select o.id, o.order_number, o.status, o.payment_method, o.payment_status, o.delivery_type, o.wilaya_code, w.name_ar, w.name_fr, o.total,
             (select coalesce(sum(i.quantity), 0)::int from public.order_items i where i.order_id = o.id) as item_count,
             o.tracking_number, o.created_at, o.customer_name, o.customer_phone, o.subtotal, o.shipping_fee, o.discount_total, d.code,
-            o.delivery_company, o.delivery_status, o.confirmed_at, o.address, cm.name_ar as commune_ar, cm.name_fr as commune_fr, cm.daira_ar, cm.daira_fr
+            o.locale as order_locale, o.delivery_company, o.delivery_status, o.confirmed_at, o.address, cm.name_ar as commune_ar, cm.name_fr as commune_fr, cm.daira_ar, cm.daira_fr
        from public.orders o join public.wilayas w on w.code = o.wilaya_code
        left join public.discount_codes d on d.id = o.discount_code_id
        left join public.communes cm on cm.id = o.commune_id
@@ -137,18 +144,28 @@ async function loadDetail(c: { get: (k: "db") => import("../lib/db.js").Db }, id
     [id],
   );
   const pending = r.status === "pending" && r.customer_phone;
+  const ask = pending ? render((await loadMessages(db)).ask[r.order_locale], { name: r.customer_name, number: r.order_number, total: `${Number(r.total)} ${r.order_locale === "ar" ? "دج" : "DA"}` }) : "";
   return {
     ...rowOut(r, locale),
     subtotal: Number(r.subtotal), shippingFee: Number(r.shipping_fee), discountTotal: Number(r.discount_total), discountCode: r.code,
-    deliveryCompany: r.delivery_company, deliveryStatus: r.delivery_status, confirmedAt: iso(r.confirmed_at),
+    deliveryCompany: r.delivery_company, deliveryStatus: r.delivery_status, carrierTrackingUrl: await carrierTrackingUrl(db, r.delivery_company, r.tracking_number), confirmedAt: iso(r.confirmed_at),
     items: items.map((i) => ({ id: i.id, name: i.product_name, size: i.size, color: i.color, unitPrice: Number(i.unit_price), quantity: Number(i.quantity), lineTotal: Number(i.line_total) })),
     customer: pending
       ? {
           name: r.customer_name!, phone: r.customer_phone!, commune: (locale === "ar" ? r.commune_ar : r.commune_fr) ?? "", daira: (locale === "ar" ? r.daira_ar : r.daira_fr) ?? null,
-          address: r.address ?? "", whatsappUrl: `https://wa.me/${toWhatsappNumber(r.customer_phone!)}`, telUrl: `tel:${r.customer_phone}`,
+          address: r.address ?? "", whatsappUrl: `https://wa.me/${toWhatsappNumber(r.customer_phone!)}`, whatsappAskUrl: waLink(r.customer_phone!, ask), telUrl: `tel:${r.customer_phone}`,
         }
       : null,
+    whatsappTrackingUrl,
   };
+}
+
+/** WhatsApp link with the tracking number and the order page typed for the customer. Built while his phone is still in our database. */
+async function trackingWhatsapp(db: import("../lib/db.js").Db, id: string, tracking: string, company: string): Promise<string | null> {
+  const o = (await db.query<{ order_number: string; public_token: string; locale: "ar" | "fr" | "en"; customer_phone: string | null; customer_name: string | null }>(`select order_number, public_token, locale, customer_phone, customer_name from public.orders where id = $1 and status = 'pending'`, [id]))[0];
+  if (!o?.customer_phone) return null;
+  const text = render((await loadMessages(db)).tracking[o.locale], { name: o.customer_name, number: o.order_number, tracking, link: orderPageUrl(getEnv().WEB_ORIGIN[0], o.locale, Number(o.order_number), o.public_token), carrierLink: await carrierTrackingUrl(db, company, tracking) });
+  return waLink(o.customer_phone, text);
 }
 
 const IdParam = z.object({ id: z.string().uuid() });
@@ -210,6 +227,7 @@ adminOrderRoutes.openapi(
       company = provider.id;
       tracking = parcel.trackingNumber;
       status = parcel.status;
+      const trackingUrl = await trackingWhatsapp(db, id, tracking, company);
       try {
         await db.query(`select public.confirm_order($1, $2, $3, $4)`, [id, company, tracking, status]);
       } catch (e) {
@@ -217,11 +235,12 @@ adminOrderRoutes.openapi(
         await provider.cancelParcel(tracking).catch(() => undefined);
         throw e;
       }
-      return c.json(await loadDetail(c, id, c.req.valid("query").locale), 200);
+      return c.json(await loadDetail(c, id, c.req.valid("query").locale, trackingUrl), 200);
     }
     // Manual tracking number: saved and personal data erased atomically in the database function.
+    const trackingUrl = await trackingWhatsapp(db, id, tracking, company);
     await db.query(`select public.confirm_order($1, $2, $3, $4)`, [id, company, tracking, status]);
-    return c.json(await loadDetail(c, id, c.req.valid("query").locale), 200);
+    return c.json(await loadDetail(c, id, c.req.valid("query").locale, trackingUrl), 200);
   },
 );
 
@@ -248,24 +267,7 @@ adminOrderRoutes.openapi(
       if (status === "cancelled") {
         await q.query(`select public.cancel_order($1)`, [id]);
       } else {
-        // Cash on delivery is paid when the parcel is delivered; a returned paid order is refunded.
-        await q.query(
-          `update public.orders set status = $2::public.order_status,
-                  payment_status = case when $2 = 'delivered' and payment_method = 'cod' then 'paid'::public.payment_status
-                                        when $2 = 'returned' and payment_status = 'paid' then 'refunded'::public.payment_status
-                                        else payment_status end,
-                  delivered_at = case when $2 = 'delivered' then now() else delivered_at end,
-                  returned_at = case when $2 = 'returned' then now() else returned_at end
-            where id = $1`,
-          [id, status],
-        );
-        // A returned parcel goes back on the shelf (unless the owner says returned goods cannot be resold).
-        if (status === "returned") {
-          const lost = (await q.query<{ lost: boolean }>(`select coalesce((value->>'returned_items_lost')::boolean, false) as lost from public.site_settings where key = 'profit'`))[0]?.lost === true;
-          if (!lost) {
-            await q.query(`update public.product_variants v set stock = v.stock + i.quantity from public.order_items i where i.order_id = $1 and i.variant_id = v.id`, [id]);
-          }
-        }
+        await moveOrder(q, id, status as "shipped" | "delivered" | "returned", FLOW[status]!);
       }
     });
     return c.json(await loadDetail(c, id, c.req.valid("query").locale), 200);

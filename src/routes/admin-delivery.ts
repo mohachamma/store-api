@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { getActiveProviderId } from "../lib/delivery/index.js";
+import { syncTracking } from "../lib/tracking.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -11,6 +12,8 @@ const security = [{ bearerAuth: [] }];
 const DeliverySettings = z
   .object({
     provider: z.string(),
+    /** Company id (or "manual") → link to its tracking page, with {tracking} where the code goes. */
+    trackingUrls: z.record(z.string(), z.string()),
     providers: z.array(z.object({ id: z.string(), name: z.string(), configured: z.boolean() })),
   })
   .openapi("AdminDelivery");
@@ -20,7 +23,8 @@ export const adminDeliveryRoutes = new OpenAPIHono<AppEnv>();
 async function current(c: { get: (k: "db" | "delivery") => never }) {
   const db = c.get("db") as import("../lib/db.js").Db;
   const all = c.get("delivery") as import("../lib/types.js").AppEnv["Variables"]["delivery"];
-  return { provider: await getActiveProviderId(db), providers: Object.values(all).map((p) => ({ id: p.id, name: p.name, configured: p.configured() })) };
+  const saved = await db.query<{ value: { tracking_urls?: Record<string, string> } }>(`select value from public.site_settings where key = 'delivery'`);
+  return { provider: await getActiveProviderId(db), trackingUrls: saved[0]?.value?.tracking_urls ?? {}, providers: Object.values(all).map((p) => ({ id: p.id, name: p.name, configured: p.configured() })) };
 }
 
 adminDeliveryRoutes.openapi(
@@ -34,19 +38,34 @@ adminDeliveryRoutes.openapi(
     path: "/admin/delivery",
     tags: ["Admin"],
     security,
-    summary: "Choose the delivery company. New confirmations use it at once; parcels already sent stay with their company.",
-    request: { body: body(z.object({ provider: z.string().min(1).max(40) })) },
+    summary: "Choose the delivery company and/or save the companies' tracking page links. New confirmations use the company at once; parcels already sent stay with their company.",
+    request: {
+      body: body(
+        z.object({
+          provider: z.string().min(1).max(40).optional(),
+          trackingUrls: z.record(z.string().min(1).max(60), z.union([z.literal(""), z.string().max(300).regex(/^https:\/\/\S+$/, "Must start with https://").refine((u) => u.includes("{tracking}"), "Put {tracking} where the parcel code goes")])).optional(),
+        }),
+      ),
+    },
     responses: { 200: json(DeliverySettings, "Saved"), ...errors },
   }),
   async (c) => {
-    const { provider } = c.req.valid("json");
-    const p = c.get("delivery")[provider];
-    if (!p) throw new ApiError(422, "unknown_provider", "Unknown delivery company");
-    if (!p.configured()) throw new ApiError(409, "delivery_not_configured", `${p.name} keys are not set on the server yet`);
-    await c.get("db").query(
-      `insert into public.site_settings (key, value) values ('delivery', $1::jsonb) on conflict (key) do update set value = excluded.value`,
-      [JSON.stringify({ provider })],
-    );
+    const b = c.req.valid("json");
+    const db = c.get("db");
+    const old = (await db.query<{ value: { provider?: string; tracking_urls?: Record<string, string> } }>(`select value from public.site_settings where key = 'delivery'`))[0]?.value ?? {};
+    let provider = old.provider ?? "manual";
+    if (b.provider) {
+      const p = c.get("delivery")[b.provider];
+      if (!p) throw new ApiError(422, "unknown_provider", "Unknown delivery company");
+      if (!p.configured()) throw new ApiError(409, "delivery_not_configured", `${p.name} keys are not set on the server yet`);
+      provider = b.provider;
+    }
+    const urls = { ...(old.tracking_urls ?? {}) };
+    for (const [k, v] of Object.entries(b.trackingUrls ?? {})) {
+      if (v) urls[k.toLowerCase()] = v;
+      else delete urls[k.toLowerCase()];
+    }
+    await db.query(`insert into public.site_settings (key, value) values ('delivery', $1::jsonb) on conflict (key) do update set value = excluded.value`, [JSON.stringify({ provider, tracking_urls: urls })]);
     return c.json(await current(c as never), 200);
   },
 );
@@ -64,15 +83,14 @@ adminDeliveryRoutes.openapi(
   async (c) => {
     const { id } = c.req.valid("param");
     const db = c.get("db");
-    const o = (await db.query<{ delivery_company: string | null; tracking_number: string | null }>(`select delivery_company, tracking_number from public.orders where id = $1`, [id]))[0];
+    const o = (await db.query<{ id: string; status: string; delivery_company: string | null; tracking_number: string | null }>(`select id, status, delivery_company, tracking_number from public.orders where id = $1`, [id]))[0];
     if (!o) throw new ApiError(404, "not_found", "Order not found");
     const p = o.delivery_company ? c.get("delivery")[o.delivery_company] : undefined;
     if (!p || p.id === "manual" || !o.tracking_number) throw new ApiError(409, "conflict", "This order has no delivery company to ask");
     if (!p.configured()) throw new ApiError(409, "delivery_not_configured", `${p.name} keys are not set on the server yet`);
     try {
-      const t = await p.getTracking(o.tracking_number);
-      await db.query(`update public.orders set delivery_status = $2 where id = $1`, [id, t.status]);
-      return c.json({ deliveryStatus: t.status }, 200);
+      const t = await syncTracking(db, c.get("delivery"), o);
+      return c.json({ deliveryStatus: t?.deliveryStatus ?? "unknown" }, 200);
     } catch (e) {
       console.error("Tracking refresh failed:", (e as Error).name);
       throw new ApiError(502, "delivery_failed", `${p.name} did not answer. Try again later.`);

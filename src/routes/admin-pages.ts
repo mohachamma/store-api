@@ -3,6 +3,7 @@ import { getSetting } from "../lib/catalog.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import { full, I18nSchema, OptionalI18nSchema, toJson } from "../lib/i18n.js";
 import { normalizePhone } from "../lib/orders.js";
+import { loadMessages } from "../lib/whatsapp.js";
 import type { AppEnv } from "../lib/types.js";
 
 const json = <T extends z.ZodTypeAny>(schema: T, description: string) => ({ description, content: { "application/json": { schema } } });
@@ -83,5 +84,26 @@ adminPagesRoutes.openapi(
     const value = { phone: b.phone, whatsapp: b.whatsapp ? normalizePhone(b.whatsapp) : "", email: b.email, address: JSON.parse(toJson(b.address) ?? "{}"), hours: JSON.parse(toJson(b.hours) ?? "{}"), site_title: JSON.parse(toJson(b.siteTitle) ?? "{}"), site_description: JSON.parse(toJson(b.siteDescription) ?? "{}") };
     await c.get("db").query(`insert into public.site_settings (key, value) values ('store_info', $1::jsonb) on conflict (key) do update set value = excluded.value`, [JSON.stringify(value)]);
     return c.json({ ok: true as const }, 200);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// WhatsApp message texts (ask the customer to confirm / the customer confirms / tracking)
+// ---------------------------------------------------------------------------
+const MessageText = z.object({ ar: z.string().trim().max(700), fr: z.string().trim().max(700), en: z.string().trim().max(700) });
+const WhatsappMessages = z
+  .object({ ask: MessageText, confirm: MessageText, tracking: MessageText })
+  .openapi("WhatsappMessages", { description: "Placeholders: {name} {number} {total} {tracking} {link} {carrierLink}. An empty text brings back the default one." });
+
+adminPagesRoutes.openapi(
+  createRoute({ method: "get", path: "/admin/whatsapp-messages", tags: ["Admin"], security, summary: "The three WhatsApp message texts (defaults filled in)", responses: { 200: json(WhatsappMessages, "OK"), ...errors } }),
+  async (c) => c.json(await loadMessages(c.get("db")), 200),
+);
+adminPagesRoutes.openapi(
+  createRoute({ method: "put", path: "/admin/whatsapp-messages", tags: ["Admin"], security, summary: "Save the WhatsApp message texts", request: { body: body(WhatsappMessages) }, responses: { 200: json(WhatsappMessages, "Saved"), ...errors } }),
+  async (c) => {
+    const b = c.req.valid("json");
+    await c.get("db").query(`insert into public.site_settings (key, value) values ('whatsapp_messages', $1::jsonb) on conflict (key) do update set value = excluded.value`, [JSON.stringify(b)]);
+    return c.json(await loadMessages(c.get("db")), 200);
   },
 );
