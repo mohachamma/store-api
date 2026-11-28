@@ -1,6 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { getSetting } from "../lib/catalog.js";
 import { LocaleQuery, pick, type Locale } from "../lib/i18n.js";
+import { cleanTag } from "../lib/attribution.js";
 import { ApiError, ErrorSchema } from "../lib/errors.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -10,8 +11,8 @@ const errors = { 401: json(ErrorSchema, "Missing or invalid token"), 403: json(E
 const security = [{ bearerAuth: [] }];
 const Ok = z.object({ ok: z.literal(true) }).openapi("Ok");
 const Id = z.object({ id: z.string().uuid() });
-const TZ = "Africa/Algiers";
-const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-31");
+export const TZ = "Africa/Algiers";
+export const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-31");
 const Range = z.object({ from: DateStr.optional(), to: DateStr.optional() });
 const ProfitQuery = Range.extend({ locale: LocaleQuery });
 
@@ -30,7 +31,7 @@ const ProfitSettings = z
   })
   .openapi("ProfitSettings");
 
-async function readSettings(db: AppEnv["Variables"]["db"]) {
+export async function readSettings(db: AppEnv["Variables"]["db"]) {
   const v = ((await getSetting(db, "profit")) ?? {}) as { return_fee?: number; returned_items_lost?: boolean; card_fee_percent?: number };
   return { returnFee: Number(v.return_fee ?? 0), returnedItemsLost: v.returned_items_lost === true, cardFeePercent: Number(v.card_fee_percent ?? 0) };
 }
@@ -60,6 +61,8 @@ const Expense = z
     spentOn: DateStr,
     category: z.enum(CATEGORIES),
     platform: z.string().nullable(),
+    /** Ads only: the campaign this spend belongs to (the same name as in the ad link), so the ads report can compare spend and sales. */
+    campaign: z.string().nullable(),
     amount: z.number().int(),
     note: z.string().nullable(),
   })
@@ -69,18 +72,19 @@ const ExpenseInput = z
     spentOn: DateStr,
     category: z.enum(CATEGORIES),
     platform: z.string().trim().max(40).nullable().default(null),
+    campaign: z.string().trim().max(80).nullable().default(null),
     amount: z.number().int().min(1).max(100_000_000),
     note: z.string().trim().max(200).nullable().default(null),
   })
   .openapi("ExpenseInput");
 
-type ExpenseRow = { id: string; spent_on: string; category: (typeof CATEGORIES)[number]; platform: string | null; amount: number; note: string | null };
-const EXPENSE_COLS = `id, to_char(spent_on, 'YYYY-MM-DD') as spent_on, category, platform, amount, note`;
-const toExpense = (r: ExpenseRow) => ({ id: r.id, spentOn: r.spent_on, category: r.category, platform: r.platform || null, amount: Number(r.amount), note: r.note || null });
+type ExpenseRow = { id: string; spent_on: string; category: (typeof CATEGORIES)[number]; platform: string | null; campaign: string | null; amount: number; note: string | null };
+const EXPENSE_COLS = `id, to_char(spent_on, 'YYYY-MM-DD') as spent_on, category, platform, campaign, amount, note`;
+const toExpense = (r: ExpenseRow) => ({ id: r.id, spentOn: r.spent_on, category: r.category, platform: r.platform || null, campaign: r.campaign || null, amount: Number(r.amount), note: r.note || null });
 
 /** Default period = this month so far (Algeria time). */
-const FROM_DEFAULT = `date_trunc('month', now() at time zone '${TZ}')::date`;
-const TO_DEFAULT = `(now() at time zone '${TZ}')::date`;
+export const FROM_DEFAULT = `date_trunc('month', now() at time zone '${TZ}')::date`;
+export const TO_DEFAULT = `(now() at time zone '${TZ}')::date`;
 
 adminProfitRoutes.openapi(
   createRoute({ method: "get", path: "/admin/expenses", tags: ["Admin"], security, summary: "Expenses in a period (default: this month)", request: { query: Range }, responses: { 200: json(z.array(Expense), "OK"), ...errors } }),
@@ -99,8 +103,8 @@ adminProfitRoutes.openapi(
   async (c) => {
     const v = c.req.valid("json");
     const rows = await c.get("db").query<ExpenseRow>(
-      `insert into public.expenses (spent_on, category, platform, amount, note) values ($1, $2, $3, $4, $5) returning ${EXPENSE_COLS}`,
-      [v.spentOn, v.category, v.platform || null, v.amount, v.note || null],
+      `insert into public.expenses (spent_on, category, platform, campaign, amount, note) values ($1, $2, $3, $4, $5, $6) returning ${EXPENSE_COLS}`,
+      [v.spentOn, v.category, cleanTag(v.platform), cleanTag(v.campaign, 80), v.amount, v.note || null],
     );
     return c.json(toExpense(rows[0]!), 201);
   },
@@ -112,8 +116,8 @@ adminProfitRoutes.openapi(
     const { id } = c.req.valid("param");
     const v = c.req.valid("json");
     const rows = await c.get("db").query<ExpenseRow>(
-      `update public.expenses set spent_on = $2, category = $3, platform = $4, amount = $5, note = $6 where id = $1 returning ${EXPENSE_COLS}`,
-      [id, v.spentOn, v.category, v.platform || null, v.amount, v.note || null],
+      `update public.expenses set spent_on = $2, category = $3, platform = $4, campaign = $5, amount = $6, note = $7 where id = $1 returning ${EXPENSE_COLS}`,
+      [id, v.spentOn, v.category, cleanTag(v.platform), cleanTag(v.campaign, 80), v.amount, v.note || null],
     );
     if (!rows.length) throw new ApiError(404, "not_found", "Expense not found");
     return c.json(toExpense(rows[0]!), 200);

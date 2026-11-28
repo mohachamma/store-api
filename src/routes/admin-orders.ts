@@ -37,6 +37,8 @@ const OrderRow = z
     /** Only while the order is pending (personal data is erased on confirmation). */
     customerName: z.string().nullable(),
     customerPhone: z.string().nullable(),
+    /** The ad the customer came from (null = no ad tags: direct visit, search, word of mouth). */
+    ad: z.object({ source: z.string().nullable(), medium: z.string().nullable(), campaign: z.string().nullable(), content: z.string().nullable() }).nullable(),
   })
   .openapi("AdminOrderRow");
 
@@ -62,17 +64,19 @@ type Row = {
   id: string; order_number: string; status: z.infer<typeof Status>; payment_method: "cod" | "chargily"; payment_status: z.infer<typeof PaymentStatus>;
   delivery_type: "home" | "desk"; wilaya_code: number; name_ar: string; name_fr: string; total: number; item_count: number; tracking_number: string | null;
   created_at: unknown; customer_name: string | null; customer_phone: string | null;
+  ad_source: string | null; ad_medium: string | null; ad_campaign: string | null; ad_content: string | null;
 };
 const wname = (r: Row, locale: Locale) => (locale === "ar" ? r.name_ar : r.name_fr);
 const rowOut = (r: Row, locale: Locale) => ({
   id: r.id, orderNumber: Number(r.order_number), status: r.status, paymentMethod: r.payment_method, paymentStatus: r.payment_status, deliveryType: r.delivery_type,
   wilayaCode: Number(r.wilaya_code), wilaya: wname(r, locale), total: Number(r.total), itemCount: Number(r.item_count), trackingNumber: r.tracking_number,
   createdAt: iso(r.created_at)!, customerName: r.customer_name, customerPhone: r.customer_phone,
+  ad: r.ad_source || r.ad_medium || r.ad_campaign || r.ad_content ? { source: r.ad_source, medium: r.ad_medium, campaign: r.ad_campaign, content: r.ad_content } : null,
 });
 const BASE_SELECT = `
   select o.id, o.order_number, o.status, o.payment_method, o.payment_status, o.delivery_type, o.wilaya_code, w.name_ar, w.name_fr, o.total,
          (select coalesce(sum(i.quantity), 0)::int from public.order_items i where i.order_id = o.id) as item_count,
-         o.tracking_number, o.created_at, o.customer_name, o.customer_phone
+         o.tracking_number, o.created_at, o.customer_name, o.customer_phone, o.ad_source, o.ad_medium, o.ad_campaign, o.ad_content
     from public.orders o join public.wilayas w on w.code = o.wilaya_code`;
 
 export const adminOrderRoutes = new OpenAPIHono<AppEnv>();
@@ -130,7 +134,7 @@ async function loadDetail(c: { get: (k: "db") => import("../lib/db.js").Db }, id
   const r = (await db.query<Row & { order_locale: Locale; subtotal: number; shipping_fee: number; discount_total: number; code: string | null; delivery_company: string | null; delivery_status: string | null; confirmed_at: unknown; address: string | null; commune_ar: string | null; commune_fr: string | null; daira_ar: string | null; daira_fr: string | null }>(
     `select o.id, o.order_number, o.status, o.payment_method, o.payment_status, o.delivery_type, o.wilaya_code, w.name_ar, w.name_fr, o.total,
             (select coalesce(sum(i.quantity), 0)::int from public.order_items i where i.order_id = o.id) as item_count,
-            o.tracking_number, o.created_at, o.customer_name, o.customer_phone, o.subtotal, o.shipping_fee, o.discount_total, d.code,
+            o.tracking_number, o.created_at, o.customer_name, o.customer_phone, o.ad_source, o.ad_medium, o.ad_campaign, o.ad_content, o.subtotal, o.shipping_fee, o.discount_total, d.code,
             o.locale as order_locale, o.delivery_company, o.delivery_status, o.confirmed_at, o.address, cm.name_ar as commune_ar, cm.name_fr as commune_fr, cm.daira_ar, cm.daira_fr
        from public.orders o join public.wilayas w on w.code = o.wilaya_code
        left join public.discount_codes d on d.id = o.discount_code_id
